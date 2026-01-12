@@ -1,0 +1,51 @@
+# Build artifacts
+build/
+*.o
+*.a
+*.so
+*.dylib
+*.out
+*.exe
+
+# Output files
+result/
+logs/
+scan_results.*
+*.json.bak
+*.csv.bak
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+
+# Temporary files
+temp/
+*.tmp
+*.swp
+*~
+*.bak
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+.clangd/
+compile_commands.json
+
+# Logs
+*.log
+*.log.*
+
+# Test outputs
+tests/output/*.json
+tests/output/*.txt
+tests/output/*.csv
+!tests/output/.gitkeep

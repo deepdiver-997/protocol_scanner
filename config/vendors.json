@@ -1,0 +1,59 @@
+{
+  "vendors": [
+    {
+      "id": 1,
+      "name": "Outlook",
+      "pattern": ".*outlook.*"
+    },
+    {
+      "id": 2,
+      "name": "Postfix",
+      "pattern": ".*Postfix.*"
+    },
+    {
+      "id": 3,
+      "name": "Exim",
+      "pattern": ".*Exim.*"
+    },
+    {
+      "id": 4,
+      "name": "Gmail",
+      "pattern": ".*gsmtp.*"
+    },
+    {
+      "id": 5,
+      "name": "MailEnable",
+      "pattern": ".*MailEnable.*"
+    },
+    {
+      "id": 6,
+      "name": "Microsoft",
+      "pattern": ".*Microsoft.*"
+    },
+    {
+      "id": 7,
+      "name": "Sendmail",
+      "pattern": ".*Sendmail.*"
+    },
+    {
+      "id": 25,
+      "name": "QQ Mail",
+      "pattern": ".*qq\\.com.*"
+    },
+    {
+      "id": 39,
+      "name": "Zimbra",
+      "pattern": ".*zimbra.*"
+    },
+    {
+      "id": 54,
+      "name": "Yahoo",
+      "pattern": ".*yahoo.*"
+    },
+    {
+      "id": 121,
+      "name": "iCloud",
+      "pattern": ".*iCloud.*"
+    }
+  ]
+}
