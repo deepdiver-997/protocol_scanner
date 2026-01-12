@@ -506,4 +506,20 @@ Many targets returning connection refused is normal - they may not have the serv
 
 ## License
 
-This project is refactored from original SMTP scanner for educational purposes.
+This project is licensed under the **Polyform Noncommercial License 1.0.0**.
+
+- **Personal/Research Use**: Free and unrestricted.
+- **Commercial Use**: Requires explicit written authorization or a separate commercial license.
+
+See the [LICENSE](LICENSE) file for the full license text.
+
+### Third-Party Licenses
+
+This project uses the following open-source libraries:
+
+- **Boost C++ Libraries**: [Boost Software License 1.0](https://www.boost.org/LICENSE_1_0.txt)
+- **nlohmann/json**: [MIT License](https://github.com/nlohmann/json/blob/develop/LICENSE.MIT)
+- **c-ares**: [MIT License](https://github.com/c-ares/c-ares/blob/master/LICENSE.md)
+- **spdlog**: [MIT License](https://github.com/gabime/spdlog/blob/v1.x/LICENSE)
+- **fmt**: [MIT License](https://github.com/fmtlib/fmt/blob/master/LICENSE)
+
