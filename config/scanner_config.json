@@ -5,28 +5,29 @@
     "thread_count": 8,
     "batch_size": 100,
     "dns_timeout_ms": 1000,
-    "probe_timeout_ms": 1000,
+    "probe_timeout_ms": 2000,
     "retry_count": 1,
-    "only_success": true
+    "only_success": true,
+    "max_work_count": 100
   },
   "protocols": {
     "SMTP": {
-      "enabled": true,
+      "enabled": false,
       "ports": [25, 465, 587, 2525],
       "timeout_ms": 3000
     },
     "POP3": {
-      "enabled": true,
+      "enabled": false,
       "ports": [110, 995],
       "timeout_ms": 3000
     },
     "IMAP": {
-      "enabled": true,
+      "enabled": false,
       "ports": [143, 993],
       "timeout_ms": 3000
     },
     "HTTP": {
-      "enabled": true,
+      "enabled": false,
       "ports": [80, 443, 8080],
       "timeout_ms": 3000
     },
@@ -39,6 +40,11 @@
       "enabled": true,
       "ports": [22],
       "timeout_ms": 3000
+    },
+    "TELNET": {
+      "enabled": true,
+      "ports": [23],
+      "timeout_ms": 3000
     }
   },
   "dns": {
@@ -48,10 +54,12 @@
   },
   "output": {
     "format": ["text", "csv"],
+    "write_mode": "stream",
     "directory": "./result",
     "enable_json": true,
     "enable_csv": true,
-    "enable_report": true
+    "enable_report": false,
+    "to_console": false
   },
   "logging": {
     "level": "INFO",

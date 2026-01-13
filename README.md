@@ -61,6 +61,9 @@ EXTRA_CMAKE_ARGS="-DENABLE_LOGGING=OFF" ./build.sh Release clean
 # Output to CSV file
 ./build/scanner --domains test_domains.txt --scan -f csv -o ./result
 
+# Final-write mode（禁用流式写文件，扫描结束后一次性写出）
+./build/scanner --domains test_domains.txt --scan -o ./result --format text --write-mode final
+
 # Quick smoke test (pre-configured test file)
 ./tests/run_smoke.sh
 ```
@@ -301,11 +304,15 @@ Edit `config/scanner_config.json`:
 ```json
 {
   "scanner": {
-    "thread_count": 8,              // Scan pool threads
-    "batch_size": 100,              // Max concurrent probes
-    "dns_timeout_ms": 5000,         // DNS query timeout
-    "probe_timeout_ms": 5000,       // Single probe timeout
-    "retry_count": 1
+    "io_thread_count": 24,          // IO 线程（网络 I/O）
+    "cpu_thread_count": 4,          // CPU 线程（轻量封装）
+    "thread_count": 8,              // 废弃：保持兼容
+    "batch_size": 100,              // 单批并发
+    "dns_timeout_ms": 1000,
+    "probe_timeout_ms": 2000,
+    "retry_count": 1,
+    "only_success": true,           // 仅输出成功结果
+    "max_work_count": 100           // 预留字段（批次最大工作量）
   },
   "protocols": {
     "SMTP": {
@@ -334,6 +341,38 @@ Edit `config/scanner_config.json`:
     "max_mx_records": 16,
     "timeout_ms": 5000
   }
+}
+```
+
+**Output 配置**
+```json
+"output": {
+  "format": ["text", "csv"],   // 允许多格式，首个为主输出
+  "write_mode": "stream",      // stream: 边扫边写；final: 扫描结束一次写
+  "directory": "./result",
+  "enable_json": true,
+  "enable_csv": true,
+  "enable_report": false,
+  "to_console": false
+}
+```
+
+**Logging 配置**
+```json
+"logging": {
+  "level": "INFO",
+  "console_enabled": false,
+  "file_enabled": false,
+  "file_path": "./scanner.log"
+}
+```
+
+**Vendor 配置**
+```json
+"vendor": {
+  "enabled": true,
+  "pattern_file": "./config/vendors.json",  // 默认路径
+  "similarity_threshold": 0.7
 }
 ```
 

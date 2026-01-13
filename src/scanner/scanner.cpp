@@ -42,6 +42,31 @@ Scanner::~Scanner() {
     if (io_pool_) io_pool_->shutdown();
 }
 
+Scanner::ScanStatistics Scanner::get_statistics() const {
+    ScanStatistics stats;
+    stats.total_targets = total_targets_.load();
+    stats.successful_ips = successful_ips_.load();
+    
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        for (const auto& [protocol, count] : protocol_success_counts_) {
+            stats.protocol_counts[protocol] = count;
+        }
+
+        if (timing_started_.load()) {
+            auto end = end_time_;
+            if (end == std::chrono::steady_clock::time_point{}) {
+                end = std::chrono::steady_clock::now();
+            }
+            stats.total_time = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_time_);
+        } else {
+            stats.total_time = std::chrono::milliseconds(0);
+        }
+    }
+    
+    return stats;
+}
+
 void Scanner::init_protocols() {
     protocols_.clear();
     if (config_.enable_smtp) protocols_.push_back(std::make_unique<SmtpProtocol>());
@@ -68,10 +93,21 @@ void Scanner::start(const std::string& source_path) {
     stop_ = false;
     input_done_ = false;
     
+    // 启动计时器
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        start_time_ = std::chrono::steady_clock::now();
+        end_time_ = std::chrono::steady_clock::time_point{};
+    }
+    timing_started_ = true;
+    
     // 启动三个线程
     input_thread_ = std::thread([this, source_path]() {
         try {
             auto targets = load_domains(source_path);
+            
+            // 记录总目标数
+            total_targets_ = static_cast<size_t>(targets.size());
             
             for (const auto& target_str : targets) {
                 if (stop_) break;
@@ -118,67 +154,129 @@ void Scanner::start(const std::string& source_path) {
 }
 
 void Scanner::result_handler_thread() {
+    const bool stream_mode = (config_.output_write_mode == "stream");
     auto last_flush = std::chrono::steady_clock::now();
     
     while (!stop_ || !result_queue_.empty()) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
-        
-        // 定时刷写结果
-        if (elapsed >= config_.result_flush_interval) {
-            std::vector<ScanReport> batch;
-            ScanReport rep;
-            
-            while (result_queue_.try_pop(rep)) {
-                batch.push_back(std::move(rep));
+
+        if (stream_mode) {
+            if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
             }
-            
-            if (!batch.empty()) {
-                {
-                    std::lock_guard<std::mutex> lock(reports_mutex_);
-                    completed_reports_.insert(completed_reports_.end(), 
-                                            std::make_move_iterator(batch.begin()),
-                                            std::make_move_iterator(batch.end()));
-                }
-                reports_cv_.notify_one();
-                
-                // 写入文件
-                if (!report_ofs_.is_open()) {
-                    std::error_code ec;
-                    fs::create_directories(config_.output_dir, ec);
-                    std::string out_path = config_.output_dir;
-                    if (!out_path.empty() && out_path.back() != '/') out_path += "/";
-                    out_path += "scan_results.txt";
-                    report_ofs_.open(out_path, std::ios::app);
-                }
-                
-                if (report_ofs_.is_open()) {
-                    for (const auto& r : batch) {
-                        report_ofs_ << r.target.domain << " (" << r.target.ip << ")\n";
-                        for (const auto& pr : r.protocols) {
-                            report_ofs_ << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port;
-                            if (pr.accessible) {
-                                report_ofs_ << " -> OK\n";
-                                if (!pr.attrs.banner.empty()) {
-                                    report_ofs_ << "    banner: " << pr.attrs.banner << "\n";
-                                }
-                            } else {
-                                report_ofs_ << " -> FAIL\n";
-                            }
-                        }
-                        report_ofs_ << "\n";
-                    }
-                    report_ofs_.flush();
-                }
+        } else {
+            if (result_queue_.empty()) {
+                if (stop_) break;
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
             }
-            
-            last_flush = now;
         }
-        
-        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        std::vector<ScanReport> batch;
+        ScanReport rep;
+        while (result_queue_.try_pop(rep)) {
+            batch.push_back(std::move(rep));
+        }
+
+        if (batch.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
+        }
+
+        // 更新统计信息
+        for (const auto& r : batch) {
+            bool has_success = false;
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                for (const auto& pr : r.protocols) {
+                    if (pr.accessible) {
+                        has_success = true;
+                        protocol_success_counts_[pr.protocol]++;
+                    }
+                }
+            }
+            if (has_success) {
+                successful_ips_++;
+            }
+        }
+
+        // 流式写入文件（在移动 batch 之前）
+        if (stream_mode) {
+            if (!report_ofs_.is_open()) {
+                std::error_code ec;
+                fs::create_directories(config_.output_dir, ec);
+                std::string out_path = config_.output_dir;
+                if (!out_path.empty() && out_path.back() != '/') out_path += "/";
+                out_path += "scan_results.txt";
+                report_ofs_.open(out_path, std::ios::app);
+                if (report_ofs_.is_open() && !header_written_) {
+                    report_ofs_ << "Scan Results\n";
+                    report_ofs_ << "============\n";
+                    header_written_ = true;
+                }
+            }
+
+            if (report_ofs_.is_open()) {
+                for (const auto& r : batch) {
+                    // 跳过没有协议结果的报告（所有协议都失败时）
+                    if (r.protocols.empty()) {
+                        continue;
+                    }
+                    
+                    report_ofs_ << r.target.domain << " (" << r.target.ip << ")\n";
+                    for (const auto& pr : r.protocols) {
+                        report_ofs_ << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port;
+                        if (pr.accessible) {
+                            report_ofs_ << " -> OK\n";
+                            if (!pr.attrs.banner.empty()) {
+                                report_ofs_ << "    banner: " << pr.attrs.banner << "\n";
+                            }
+                        } else {
+                            report_ofs_ << " -> FAIL\n";
+                        }
+                    }
+                    report_ofs_ << "\n";
+                }
+                report_ofs_.flush();
+            }
+        }
+
+        {
+            std::lock_guard<std::mutex> lock(reports_mutex_);
+            completed_reports_.insert(completed_reports_.end(),
+                                    std::make_move_iterator(batch.begin()),
+                                    std::make_move_iterator(batch.end()));
+        }
+        reports_cv_.notify_one();
+
+        last_flush = std::chrono::steady_clock::now();
     }
     
-    if (report_ofs_.is_open()) {
+    if (stream_mode && report_ofs_.is_open()) {
+        report_ofs_ << "\n================== 扫描统计 ==================\n";
+        report_ofs_ << "总目标数: " << total_targets_.load() << "\n";
+        report_ofs_ << "成功探测IP数: " << successful_ips_.load() << "\n";
+        report_ofs_ << "\n各协议成功数:\n";
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            for (const auto& [protocol, count] : protocol_success_counts_) {
+                report_ofs_ << "  " << protocol << ": " << count << "\n";
+            }
+        }
+        if (timing_started_.load()) {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            auto end = end_time_;
+            // 如果 end_time_ 还未设置（scan_loop 未完成），使用当前时间
+            if (end == std::chrono::steady_clock::time_point{}) {
+                end = std::chrono::steady_clock::now();
+            }
+            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_time_);
+            report_ofs_ << "\n总耗时: " << duration.count() << " ms\n";
+        }
+        report_ofs_ << "============================================\n";
+        report_ofs_.flush();
         report_ofs_.close();
     }
     
@@ -249,6 +347,7 @@ void Scanner::scan_loop() {
                 config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
                 protocols_
             );
+            sess->set_only_success(config_.only_success);
 
             while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
                 --quota;
@@ -291,6 +390,15 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
         reports_cv_.wait(lock, [this]() {
             return input_done_ && targets_.empty() && sessions_.empty();
         });
+    }
+    
+    // 等待 result_thread_ 完成，确保所有结果已写入文件
+    // 这样避免 result_thread_ 的周期性写入和最终写入冲突
+    if (result_thread_.joinable()) {
+        lock.unlock();  // 释放锁，避免死锁
+        stop_ = true;  // 确保 result_handler_thread 退出
+        result_thread_.join();
+        lock.lock();   // 重新获取锁
     }
     
     return std::move(completed_reports_);
@@ -376,8 +484,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
                 config_.probe_timeout,
                 config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
                 protocols_
-            );
-
+            );            sess->set_only_success(config_.only_success);
             while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
                 --quota;
             }
@@ -403,6 +510,12 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    // 停止计时器
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        end_time_ = std::chrono::steady_clock::now();
     }
 
     std::vector<ScanReport> reports;

@@ -243,6 +243,12 @@ std::shared_ptr<TaskQueue<ProtocolResult>> ScanSession::result_queue(const std::
 
 void ScanSession::push_result(ProtocolResult&& r) {
     mark_task_completed();
+    
+    // 如果设置了 only_success，过滤失败结果
+    if (only_success_ && !r.accessible) {
+        return;  // 丢弃失败结果，不推入队列
+    }
+    
     // 分发到对应协议的结果队列，避免 if-else
     auto rq = result_queue(r.protocol);
     if (rq) {

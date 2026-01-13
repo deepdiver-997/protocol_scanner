@@ -28,6 +28,10 @@ temp/
 *.swp
 *~
 *.bak
+*.docx
+docs/*.md
+!ARCHITECTURE.md
+!CONFIGURATION.md
 
 # OS specific
 .DS_Store
@@ -51,3 +55,5 @@ tests/output/*.csv
 !tests/output/.gitkeep
 data/
 tests/
+*ip*
+!get_country_ips.sh

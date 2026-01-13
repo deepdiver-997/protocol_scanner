@@ -54,67 +54,90 @@ ScannerConfig load_config(const string& config_file) {
             nlohmann::json j = nlohmann::json::parse(ifs);
             ifs.close();
 
-            // 加载 scanner 配置
+            // ===== Scanner 配置 =====
             if (j.contains("scanner")) {
                 auto s = j["scanner"];
                 if (s.contains("io_thread_count")) config.io_thread_count = s["io_thread_count"];
                 if (s.contains("cpu_thread_count")) config.cpu_thread_count = s["cpu_thread_count"];
-                if (s.contains("thread_count")) config.thread_count = s["thread_count"]; // 向后兼容
+                if (s.contains("thread_count")) config.thread_count = s["thread_count"];
                 if (s.contains("batch_size")) config.batch_size = s["batch_size"];
                 if (s.contains("dns_timeout_ms")) config.dns_timeout = std::chrono::milliseconds(s["dns_timeout_ms"]);
                 if (s.contains("probe_timeout_ms")) config.probe_timeout = std::chrono::milliseconds(s["probe_timeout_ms"]);
                 if (s.contains("retry_count")) config.retry_count = s["retry_count"];
                 if (s.contains("only_success")) config.only_success = s["only_success"];
+                if (s.contains("max_work_count")) config.max_work_count = s["max_work_count"];
             }
 
-            // 加载协议配置
+            // ===== Protocols 配置 =====
             if (j.contains("protocols")) {
                 auto p = j["protocols"];
-                if (p.contains("SMTP")) {
-                    if (p["SMTP"].contains("enabled")) config.enable_smtp = p["SMTP"]["enabled"];
-                }
-                if (p.contains("POP3")) {
-                    if (p["POP3"].contains("enabled")) config.enable_pop3 = p["POP3"]["enabled"];
-                }
-                if (p.contains("IMAP")) {
-                    if (p["IMAP"].contains("enabled")) config.enable_imap = p["IMAP"]["enabled"];
-                }
-                if (p.contains("HTTP")) {
-                    if (p["HTTP"].contains("enabled")) config.enable_http = p["HTTP"]["enabled"];
-                }
-                if (p.contains("TELNET")) {
-                    if (p["TELNET"].contains("enabled")) config.enable_telnet = p["TELNET"]["enabled"];
-                }
-                if (p.contains("FTP")) {
-                    if (p["FTP"].contains("enabled")) config.enable_ftp = p["FTP"]["enabled"];
-                }
-                if (p.contains("SSH")) {
-                    if (p["SSH"].contains("enabled")) config.enable_ssh = p["SSH"]["enabled"];
-                }
+                if (p.contains("SMTP") && p["SMTP"].contains("enabled")) config.enable_smtp = p["SMTP"]["enabled"];
+                if (p.contains("POP3") && p["POP3"].contains("enabled")) config.enable_pop3 = p["POP3"]["enabled"];
+                if (p.contains("IMAP") && p["IMAP"].contains("enabled")) config.enable_imap = p["IMAP"]["enabled"];
+                if (p.contains("HTTP") && p["HTTP"].contains("enabled")) config.enable_http = p["HTTP"]["enabled"];
+                if (p.contains("FTP") && p["FTP"].contains("enabled")) config.enable_ftp = p["FTP"]["enabled"];
+                if (p.contains("TELNET") && p["TELNET"].contains("enabled")) config.enable_telnet = p["TELNET"]["enabled"];
+                if (p.contains("SSH") && p["SSH"].contains("enabled")) config.enable_ssh = p["SSH"]["enabled"];
             }
 
-            // 加载 vendor 配置
+            // ===== DNS 配置 =====
+            if (j.contains("dns")) {
+                auto d = j["dns"];
+                if (d.contains("resolver_type")) config.dns_resolver_type = d["resolver_type"];
+                if (d.contains("max_mx_records")) config.dns_max_mx_records = d["max_mx_records"];
+                if (d.contains("timeout_ms")) config.dns_config_timeout = std::chrono::milliseconds(d["timeout_ms"]);
+            }
+
+            // ===== Output 配置 =====
+            if (j.contains("output")) {
+                auto o = j["output"];
+                if (o.contains("format")) {
+                    auto fmt = o["format"];
+                    if (fmt.is_array()) {
+                        config.output_formats.clear();
+                        for (const auto& f : fmt) {
+                            config.output_formats.push_back(f.get<std::string>());
+                        }
+                    } else if (fmt.is_string()) {
+                        config.output_formats.clear();
+                        config.output_formats.push_back(fmt.get<std::string>());
+                    }
+                }
+                if (o.contains("directory")) config.output_dir = o["directory"];
+                if (o.contains("write_mode")) {
+                    auto mode = o["write_mode"].get<std::string>();
+                    if (mode == "stream" || mode == "final") {
+                        config.output_write_mode = mode;
+                    } else {
+                        LOG_CORE_WARN("Invalid write_mode '{}', fallback to 'stream'", mode);
+                        config.output_write_mode = "stream";
+                    }
+                }
+                if (o.contains("enable_json")) config.output_enable_json = o["enable_json"];
+                if (o.contains("enable_csv")) config.output_enable_csv = o["enable_csv"];
+                if (o.contains("enable_report")) config.output_enable_report = o["enable_report"];
+                if (o.contains("to_console")) config.output_to_console = o["to_console"];
+            }
+
+            // ===== Logging 配置 =====
+            if (j.contains("logging")) {
+                auto l = j["logging"];
+                if (l.contains("level")) config.logging_level = l["level"];
+                if (l.contains("console_enabled")) config.logging_console_enabled = l["console_enabled"];
+                if (l.contains("file_enabled")) config.logging_file_enabled = l["file_enabled"];
+                if (l.contains("file_path")) config.logging_file_path = l["file_path"];
+            }
+
+            // ===== Vendor 配置 =====
             if (j.contains("vendor")) {
                 auto v = j["vendor"];
                 if (v.contains("enabled")) config.enable_vendor = v["enabled"];
+                if (v.contains("pattern_file")) config.vendor_pattern_file = v["pattern_file"];
+                if (v.contains("similarity_threshold")) config.vendor_similarity_threshold = v["similarity_threshold"];
             }
 
             LOG_CORE_INFO("Loaded config from {}", config_file);
 
-            // 显示线程配置（优先显示新配置）
-            if (config.io_thread_count > 0 && config.cpu_thread_count > 0) {
-                LOG_CORE_INFO("IO threads: {}, CPU threads: {}",
-                    config.io_thread_count, config.cpu_thread_count);
-            } else {
-                LOG_CORE_INFO("Threads: {} (legacy mode)", config.thread_count);
-            }
-
-            LOG_CORE_INFO("Batch size: {}", config.batch_size);
-            LOG_CORE_INFO("Probe timeout: {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(config.probe_timeout).count());
-            LOG_CORE_INFO("SMTP: {}, POP3: {}, IMAP: {}, HTTP: {}, FTP: {}, TELNET: {}, SSH: {}",
-                config.enable_smtp, config.enable_pop3, config.enable_imap, config.enable_http,
-                config.enable_ftp, config.enable_telnet, config.enable_ssh);
-            LOG_CORE_INFO("Only success: {}", config.only_success);
         } catch (const nlohmann::json::exception& e) {
             LOG_CORE_WARN("Failed to parse config file '{}': {}", config_file, e.what());
             LOG_CORE_WARN("Using default configuration");
@@ -387,7 +410,10 @@ int main(int argc, char* argv[]) {
 
         // 初始化 Vendor Detector
         std::unique_ptr<VendorDetector> vendor_detector;
-        string vendor_file = config.output_dir + "/vendors.json";
+        // 默认使用配置文件指定的 pattern_file；未指定时回退到 output_dir/vendors.json
+        string vendor_file = config.vendor_pattern_file.empty()
+            ? (config.output_dir + "/vendors.json")
+            : config.vendor_pattern_file;
         if (config.enable_vendor) {
             vendor_detector = std::make_unique<VendorDetector>();
             if (vm.count("vendor-file")) {
@@ -404,6 +430,7 @@ int main(int argc, char* argv[]) {
             LOG_CORE_INFO("Starting scan with input source: {}", domains_file);
             Scanner scanner(config);
             auto start_tp = std::chrono::steady_clock::now();
+            const bool streaming_mode = (config.output_write_mode == "stream");
             
             // 启动扫描（异步）
             scanner.start(domains_file);
@@ -435,77 +462,58 @@ int main(int argc, char* argv[]) {
             // 检查是否只输出成功结果
             bool only_success = config.only_success;
 
-            // 生成文本结果（当前版本将结果打印为文本；JSON/CSV 可后续由 ResultHandler 实现）
+            // 使用 ResultHandler 生成结果
+            ResultHandler rh;
+            rh.set_format(config.output_format == "json" ? OutputFormat::JSON :
+                         config.output_format == "csv" ? OutputFormat::CSV :
+                         config.output_format == "report" ? OutputFormat::REPORT : OutputFormat::TEXT);
+            rh.set_only_success(only_success);
+
             std::ostringstream oss;
-            oss << "\nScan Results\n";
-            oss << "============\n";
-            for (const auto& rep : reports) {
-                oss << rep.target.domain << " (" << rep.target.ip << ")\n";
-                for (const auto& pr : rep.protocols) {
-                    // 如果启用了only-success选项且当前探测失败，则跳过
-                    if (only_success && !pr.accessible) {
-                        continue;
-                    }
-                    
-                    oss << "  [" << pr.protocol << "] "
-                        << pr.host << ":" << pr.port << " -> "
-                        << (pr.accessible ? "OK" : "FAIL");
-                    if (!pr.error.empty()) {
-                        oss << " (" << pr.error << ")";
-                    }
-                    oss << "\n";
-                    if (pr.accessible) {
-                        if (!pr.attrs.banner.empty()) {
-                            oss << "    banner: " << pr.attrs.banner << "\n";
-                        }
-                        if (!pr.attrs.vendor.empty()) {
-                            oss << "    vendor: " << pr.attrs.vendor << "\n";
-                        }
-                        if (pr.protocol == "SMTP") {
-                            oss << "    features: PIPELINING=" << (pr.attrs.smtp.pipelining ? "1" : "0")
-                                << ", STARTTLS=" << (pr.attrs.smtp.starttls ? "1" : "0")
-                                << ", 8BITMIME=" << (pr.attrs.smtp._8bitmime ? "1" : "0")
-                                << ", DSN=" << (pr.attrs.smtp.dsn ? "1" : "0")
-                                << ", SMTPUTF8=" << (pr.attrs.smtp.utf8 ? "1" : "0")
-                                << ", SIZE=" << (pr.attrs.smtp.size_supported ? std::to_string(pr.attrs.smtp.size_limit) : std::string("unsupported"))
-                                << ", AUTH=" << (pr.attrs.smtp.auth_methods.empty() ? std::string("-") : pr.attrs.smtp.auth_methods)
-                                << "\n";
-                        }
-                    }
-                }
-                oss << "\n";
-            }
+            if (!streaming_mode || config.output_to_console) {
+                oss << "\nScan Results\n";
+                oss << "============\n";
+                oss << rh.reports_to_string(reports);
 
-            // 输出 vendor 统计
-            if (vendor_detector) {
-                auto stats = vendor_detector->get_statistics();
-                if (!stats.empty()) {
-                    oss << "\nVendor Statistics\n";
-                    oss << "=================\n";
-                    for (const auto& s : stats) {
-                        if (s.count > 0) {
-                            oss << s.name << ": " << s.count << " servers\n";
+                // 输出 vendor 统计
+                if (vendor_detector) {
+                    auto stats = vendor_detector->get_statistics();
+                    if (!stats.empty()) {
+                        for (const auto& s : stats) {
+                            if (s.count > 0) {
+                                oss << s.name << ": " << s.count << " servers\n";
+                            }
                         }
                     }
                 }
 
-                // 保存更新的 vendor 模式
-                vendor_detector->save_patterns(vendor_file);
+                if (!streaming_mode) {
+                    auto stats = scanner.get_statistics();
+                    oss << "\n================== Scan Statistics ==================\n";
+                    oss << "Total Targets: " << stats.total_targets << "\n";
+                    oss << "Successful IPs: " << stats.successful_ips << "\n";
+                    oss << "\nProtocol Success Counts:\n";
+                    for (const auto& [protocol, count] : stats.protocol_counts) {
+                        oss << "  " << protocol << ": " << count << "\n";
+                    }
+                    oss << "\nTotal Time: " << stats.total_time.count() << " ms\n";
+                    oss << "====================================================\n";
+                }
+
+                // 将结果写到控制台
+                if (config.output_to_console) {
+                    std::cout << oss.str();
+                }
             }
 
-            // 将结果写到控制台
-            std::cout << oss.str();
-
-            // 如果指定了输出目录，则保存到文件
-            if (vm.count("output")) {
+            // 如果指定了输出目录，则保存到文件（仅 final 模式防止与流式输出冲突）
+            if (!streaming_mode && vm.count("output")) {
                 std::error_code ec;
-                // 尝试创建输出目录（如果是"."不会报错）
                 std::filesystem::create_directories(config.output_dir, ec);
                 if (ec) {
                     LOG_CORE_WARN("Failed to create output dir '{}': {}", config.output_dir, ec.message());
                 }
 
-                // 根据格式决定扩展名（当前仅文本输出）
                 std::string ext = "txt";
                 if (config.output_format == "json") ext = "json";
                 else if (config.output_format == "csv") ext = "csv";
@@ -519,18 +527,16 @@ int main(int argc, char* argv[]) {
                 if (!ofs) {
                     LOG_CORE_ERROR("Cannot open output file: {}", out_path);
                 } else {
-                    // 按需选择输出格式
-                    if (ext == "json" || ext == "csv") {
-                        ResultHandler rh;
-                        rh.set_format(ext == "json" ? OutputFormat::JSON : OutputFormat::CSV);
-                        rh.set_only_success(config.only_success);
-                        ofs << rh.reports_to_string(reports);
-                    } else {
-                        ofs << oss.str();
-                    }
+                    ofs << oss.str();
                     ofs.close();
                     LOG_CORE_INFO("Results saved to {}", out_path);
                 }
+            } else if (streaming_mode) {
+                LOG_CORE_INFO("Streaming output mode: results are written by the result handler thread to {}/scan_results.txt", config.output_dir);
+            }
+
+            if (vendor_detector) {
+                vendor_detector->save_patterns(vendor_file);
             }
 
             return 0;

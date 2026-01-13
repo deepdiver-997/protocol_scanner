@@ -41,10 +41,15 @@
 ```json
 {
   "scanner": {
-    "io_thread_count": 12,
-    "cpu_thread_count": 2,
+    "io_thread_count": 24,
+    "cpu_thread_count": 4,
+    "thread_count": 8,
     "batch_size": 100,
-    "probe_timeout_ms": 3000
+    "dns_timeout_ms": 1000,
+    "probe_timeout_ms": 2000,
+    "retry_count": 1,
+    "only_success": true,
+    "max_work_count": 100
   }
 }
 ```
@@ -59,6 +64,10 @@
 - `thread_count`: 废弃参数，保留向后兼容
 - `batch_size`: 每批次任务数，建议 100-1000
 - `probe_timeout_ms`: 单次探测超时（毫秒），建议 3000-5000
+- `dns_timeout_ms`: DNS 查询超时
+- `retry_count`: 探测重试次数
+- `only_success`: 仅输出成功结果
+- `max_work_count`: 批次/工作量上限（预留防护）
 
 ---
 
@@ -73,6 +82,40 @@
 # 只指定 IO 线程，CPU 使用默认
 ./build/scanner --domains domains.txt --scan \
     --io-threads 8
+```
+
+### 输出、日志与厂商识别配置
+
+**Output**
+```json
+"output": {
+  "format": ["text", "csv"],   // 主输出 + 附加格式
+  "write_mode": "stream",      // stream: 边扫边写；final: 扫描结束一次写
+  "directory": "./result",
+  "enable_json": true,
+  "enable_csv": true,
+  "enable_report": false,
+  "to_console": false
+}
+```
+
+**Logging**
+```json
+"logging": {
+  "level": "INFO",
+  "console_enabled": false,
+  "file_enabled": false,
+  "file_path": "./scanner.log"
+}
+```
+
+**Vendor**
+```json
+"vendor": {
+  "enabled": true,
+  "pattern_file": "./config/vendors.json",  // 可通过 --vendor-file 覆盖
+  "similarity_threshold": 0.7
+}
 ```
 
 ---
@@ -100,7 +143,8 @@
     "io_thread_count": 4,
     "cpu_thread_count": 2,
     "batch_size": 100,
-    "probe_timeout_ms": 3000
+    "probe_timeout_ms": 3000,
+    "only_success": true
   }
 }
 ```
@@ -113,7 +157,8 @@
     "io_thread_count": 12,
     "cpu_thread_count": 2,
     "batch_size": 500,
-    "probe_timeout_ms": 3000
+    "probe_timeout_ms": 3000,
+    "only_success": true
   }
 }
 ```
@@ -126,7 +171,8 @@
     "io_thread_count": 24,
     "cpu_thread_count": 4,
     "batch_size": 1000,
-    "probe_timeout_ms": 5000
+    "probe_timeout_ms": 5000,
+    "only_success": true
   }
 }
 ```

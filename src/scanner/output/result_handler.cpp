@@ -12,10 +12,22 @@ static inline const char* bool_str(bool v) { return v ? "1" : "0"; }
 
 std::string ResultHandler::to_text(const ScanReport& report) const {
     std::ostringstream oss;
-    oss << report.target.domain << " (" << report.target.ip << ")\n";
+
+    // 先收集需要输出的协议（应用 only_success 过滤）
+    std::vector<ProtocolResult> filtered_protocols;
     for (const auto& pr : report.protocols) {
-        if (only_success_ && !pr.accessible) continue;
-        
+        if (only_success_ && !pr.accessible) {
+            continue;
+        }
+        filtered_protocols.push_back(pr);
+    }
+
+    // 仅当有过滤后的协议结果时才输出目标行
+    if (!filtered_protocols.empty()) {
+        oss << report.target.domain << " (" << report.target.ip << ")\n";
+    }
+
+    for (const auto& pr : filtered_protocols) {
         oss << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port
             << " -> " << (pr.accessible ? "OK" : "FAIL");
         if (!pr.error.empty()) oss << " (" << pr.error << ")";

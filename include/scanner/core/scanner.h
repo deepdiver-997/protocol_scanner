@@ -24,32 +24,57 @@ namespace asio = boost::asio;
 // =====================
 
 struct ScannerConfig {
-    // 线程池配置
+    // Scanner 配置
     int io_thread_count = 4;         // IO 线程数（网络 I/O，建议设置为 CPU 核心数 × 1.5）
-    int cpu_thread_count = 2;         // CPU 线程数（协议解析等轻量任务，建议 2-4）
-    
-    // 兼容旧配置（如果未设置 io/cpu 线程数，则使用 thread_count）
-    int thread_count = 4;              // 废弃：保留向后兼容
-    
-    int batch_size = 10000;           // 批处理大小
-    size_t targets_max_size = 1000000; // 最大待处理目标数（默认 100 万）
-    std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(5000);  // DNS 超时
-    std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(60000); // 探测超时
-    int retry_count = 1;               // 重试次数
-    bool scan_all_ports = false;    // 扫描所有端口
-    bool enable_smtp = true;          // 启用 SMTP
-    bool enable_pop3 = true;          // 启用 POP3
-    bool enable_imap = true;          // 启用 IMAP
-    bool enable_http = false;          // 启用 HTTP
-    bool enable_ftp = false;           // 启用 FTP
-    bool enable_telnet = false;        // 启用 Telnet
-    bool enable_ssh = false;           // 启用 SSH
-    bool enable_vendor = true;         // 启用厂商识别
-    std::string output_dir = "./result"; // 输出目录
-    std::string output_format = "text";  // 输出格式
-    bool only_success = false;        // 是否仅输出成功的结果
-    std::vector<std::string> custom_protocols; // 自定义协议列表
-    std::chrono::milliseconds result_flush_interval = std::chrono::milliseconds(5000); // 结果写入间隔
+    int cpu_thread_count = 2;        // CPU 线程数（协议解析等轻量任务，建议 2-4）
+    int thread_count = 4;            // 废弃：保留向后兼容
+    int batch_size = 100;            // 批处理大小
+    size_t targets_max_size = 100000; // 最大待处理目标数（默认 10 万）
+    std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(1000);
+    std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(2000);
+    int retry_count = 1;             // 重试次数
+    std::chrono::milliseconds result_flush_interval = std::chrono::milliseconds(5000);
+    std::string output_write_mode = "stream";   // stream 或 final
+    bool only_success = false;       // 是否仅输出成功的结果
+    size_t max_work_count = 0;    // 最大工作目标数（0 表示不限制）
+
+    // Protocol 配置
+    bool enable_smtp = false;
+    bool enable_pop3 = false;
+    bool enable_imap = false;
+    bool enable_http = true;
+    bool enable_ftp = true;
+    bool enable_telnet = false;
+    bool enable_ssh = true;
+    bool scan_all_ports = false;
+
+    // DNS 配置
+    std::string dns_resolver_type = "cares";  // cares 或 dig
+    int dns_max_mx_records = 16;
+    std::chrono::milliseconds dns_config_timeout = std::chrono::milliseconds(5000);
+
+    // Output 配置
+    std::vector<std::string> output_formats;  // ["text", "csv", "json"]
+    std::string output_dir = "./result";      // 输出目录
+    bool output_enable_json = true;
+    bool output_enable_csv = true;
+    bool output_enable_report = false;
+    bool output_to_console = false;
+    std::string output_format = "text";       // 主输出格式
+
+    // Logging 配置
+    std::string logging_level = "INFO";
+    bool logging_console_enabled = false;
+    bool logging_file_enabled = false;
+    std::string logging_file_path = "./scanner.log";
+
+    // Vendor 配置
+    bool enable_vendor = true;
+    std::string vendor_pattern_file = "./config/vendors.json";
+    double vendor_similarity_threshold = 0.7;
+
+    // 其他
+    std::vector<std::string> custom_protocols;
 };
 
 // =====================
@@ -97,6 +122,15 @@ public:
     // 获取配置
     const ScannerConfig& config() const { return config_; }
 
+    // 获取统计信息
+    struct ScanStatistics {
+        size_t total_targets = 0;           // 总目标数
+        size_t successful_ips = 0;          // 成功探测的 IP 数
+        std::unordered_map<std::string, size_t> protocol_counts; // 各协议成功数
+        std::chrono::milliseconds total_time{0}; // 总耗时
+    };
+    ScanStatistics get_statistics() const;
+
 private:
     // 初始化协议
     void init_protocols();
@@ -137,6 +171,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> input_done_{false};
     std::ofstream report_ofs_;
+    bool header_written_{false};
 
     std::thread input_thread_;
     std::thread result_thread_;
@@ -145,6 +180,17 @@ private:
     std::vector<ScanReport> completed_reports_;
     std::mutex reports_mutex_;
     std::condition_variable reports_cv_;
+
+    // 统计信息
+    std::atomic<size_t> total_targets_{0};
+    std::atomic<size_t> successful_ips_{0};
+    std::unordered_map<std::string, size_t> protocol_success_counts_;
+    mutable std::mutex stats_mutex_;
+
+    // 计时器
+    std::chrono::steady_clock::time_point start_time_;
+    std::chrono::steady_clock::time_point end_time_;
+    std::atomic<bool> timing_started_{false};
 };
 
 // =====================

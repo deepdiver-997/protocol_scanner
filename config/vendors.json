@@ -2,56 +2,67 @@
   "vendors": [
     {
       "id": 1,
+      "matched_ids": [],
       "name": "Outlook",
       "pattern": ".*outlook.*"
     },
     {
       "id": 2,
+      "matched_ids": [],
       "name": "Postfix",
       "pattern": ".*Postfix.*"
     },
     {
       "id": 3,
+      "matched_ids": [],
       "name": "Exim",
       "pattern": ".*Exim.*"
     },
     {
+      "id": 25,
+      "matched_ids": [],
+      "name": "QQ Mail",
+      "pattern": ".*qq\\.com.*"
+    },
+    {
       "id": 4,
+      "matched_ids": [],
       "name": "Gmail",
       "pattern": ".*gsmtp.*"
     },
     {
       "id": 5,
+      "matched_ids": [],
       "name": "MailEnable",
       "pattern": ".*MailEnable.*"
     },
     {
-      "id": 6,
-      "name": "Microsoft",
-      "pattern": ".*Microsoft.*"
-    },
-    {
       "id": 7,
+      "matched_ids": [],
       "name": "Sendmail",
       "pattern": ".*Sendmail.*"
     },
     {
-      "id": 25,
-      "name": "QQ Mail",
-      "pattern": ".*qq\\.com.*"
+      "id": 6,
+      "matched_ids": [],
+      "name": "Microsoft",
+      "pattern": ".*Microsoft.*"
     },
     {
       "id": 39,
+      "matched_ids": [],
       "name": "Zimbra",
       "pattern": ".*zimbra.*"
     },
     {
       "id": 54,
+      "matched_ids": [],
       "name": "Yahoo",
       "pattern": ".*yahoo.*"
     },
     {
       "id": 121,
+      "matched_ids": [],
       "name": "iCloud",
       "pattern": ".*iCloud.*"
     }

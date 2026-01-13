@@ -124,6 +124,9 @@ public:
     // 获取所有协议结果
     std::vector<ProtocolResult> protocol_results();
 
+    // 设置是否仅收集成功结果
+    void set_only_success(bool only_success) { only_success_ = only_success; }
+
 private:
     ScanTarget target_;
     std::shared_ptr<class IDnsResolver> dns_resolver_;
@@ -147,6 +150,9 @@ private:
     // 任务计数
     std::atomic<std::size_t> tasks_total_{0};
     std::atomic<std::size_t> tasks_completed_{0};
+
+    // 过滤策略
+    bool only_success_{false};
 };
 
 } // namespace scanner
