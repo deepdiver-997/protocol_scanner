@@ -10,6 +10,8 @@
 #include <memory>
 #include <functional>
 #include <fstream>
+#include <thread>
+#include <chrono>
 #include <boost/asio.hpp>
 
 namespace scanner {
@@ -30,6 +32,7 @@ struct ScannerConfig {
     int thread_count = 4;              // 废弃：保留向后兼容
     
     int batch_size = 10000;           // 批处理大小
+    size_t targets_max_size = 1000000; // 最大待处理目标数（默认 100 万）
     std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(5000);  // DNS 超时
     std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(60000); // 探测超时
     int retry_count = 1;               // 重试次数
@@ -38,10 +41,15 @@ struct ScannerConfig {
     bool enable_pop3 = true;          // 启用 POP3
     bool enable_imap = true;          // 启用 IMAP
     bool enable_http = false;          // 启用 HTTP
+    bool enable_ftp = false;           // 启用 FTP
+    bool enable_telnet = false;        // 启用 Telnet
+    bool enable_ssh = false;           // 启用 SSH
     bool enable_vendor = true;         // 启用厂商识别
     std::string output_dir = "./result"; // 输出目录
     std::string output_format = "text";  // 输出格式
+    bool only_success = false;        // 是否仅输出成功的结果
     std::vector<std::string> custom_protocols; // 自定义协议列表
+    std::chrono::milliseconds result_flush_interval = std::chrono::milliseconds(5000); // 结果写入间隔
 };
 
 // =====================
@@ -64,17 +72,24 @@ public:
     explicit Scanner(const ScannerConfig& config);
     ~Scanner();
 
-    void start();
+    // 启动扫描，异步模式
+    void start(const std::string& source_path);
 
-    // 扫描单个目标
+    // 获取扫描结果（阻塞，直到扫描完成或超时）
+    std::vector<ScanReport> get_results(std::chrono::milliseconds timeout = std::chrono::milliseconds(-1));
+
+    // 停止扫描
+    void stop();
+
+    // 扫描单个目标（同步）
     ScanReport scan_target(const ScanTarget& target);
 
-    // 批量扫描
+    // 批量扫描（同步）
     std::vector<ScanReport> scan_targets(
         const std::vector<ScanTarget>& targets
     );
 
-    // 从域名列表扫描
+    // 从域名列表扫描（同步，保留向后兼容）
     std::vector<ScanReport> scan_domains(
         const std::vector<std::string>& domains
     );
@@ -98,6 +113,12 @@ private:
     // 检查协议是否启用
     bool is_protocol_enabled(const std::string& name) const;
 
+    // 结果处理线程
+    void result_handler_thread();
+
+    // 主扫描循环
+    void scan_loop();
+
     ScannerConfig config_;
     std::vector<std::unique_ptr<IProtocol>> protocols_;
     std::unique_ptr<class IDnsResolver> dns_resolver_;
@@ -114,7 +135,16 @@ private:
     std::vector<std::unique_ptr<ScanSession>> sessions_;
 
     std::atomic<bool> stop_{false};
+    std::atomic<bool> input_done_{false};
     std::ofstream report_ofs_;
+
+    std::thread input_thread_;
+    std::thread result_thread_;
+    std::thread scan_thread_;
+
+    std::vector<ScanReport> completed_reports_;
+    std::mutex reports_mutex_;
+    std::condition_variable reports_cv_;
 };
 
 // =====================
@@ -123,6 +153,9 @@ private:
 
 // 从文件加载域名列表
 std::vector<std::string> load_domains(const std::string& filename, size_t offset = 0);
+
+// 检查是否是有效的 IP 地址
+bool is_valid_ip_address(const std::string& s);
 
 // 从文件加载目标列表
 std::vector<ScanTarget> load_targets(const std::string& filename);

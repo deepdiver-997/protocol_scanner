@@ -387,36 +387,45 @@ bool CAresResolver::query_a_record(
     if (!channel_ && !init_channel()) return false;
 
     std::atomic<bool> done{false};
-    int query_status = ARES_EDESTRUCTION; // default error
+    
+    // 使用 shared_ptr 确保回调时内存仍然有效
+    auto ctx = std::make_shared<std::pair<std::string, int>>();
+    ctx->second = ARES_EDESTRUCTION;
 
     auto callback = [](void* arg, int status, int /*timeouts*/, struct hostent* host) {
-        auto* ctx = static_cast<std::pair<std::string*, int*>*>(arg);
-        *ctx->second = status;
+        auto ctx = static_cast<std::shared_ptr<std::pair<std::string, int>>*>(arg);
+        if (!ctx) return;
+        
+        (*ctx)->second = status;
         if (status == ARES_SUCCESS && host && host->h_addrtype == AF_INET && host->h_addr_list && host->h_addr_list[0]) {
             char buf[INET_ADDRSTRLEN];
             const char* res = inet_ntop(AF_INET, host->h_addr_list[0], buf, sizeof(buf));
             if (res) {
-                *ctx->first = buf;
+                (*ctx)->first = buf;
             }
         }
+        delete ctx;
     };
 
-    std::pair<std::string*, int*> ctx{&ip, &query_status};
-    ares_gethostbyname(channel_, domain.c_str(), AF_INET, callback, &ctx);
+    auto* ctx_ptr = new std::shared_ptr<std::pair<std::string, int>>(ctx);
+    ares_gethostbyname(channel_, domain.c_str(), AF_INET, callback, ctx_ptr);
 
     bool loop_ok = run_event_loop(timeout, done);
     // c-ares doesn't set 'done' automatically; check sockets until none
     done.store(true);
 
     if (!loop_ok) {
-        LOG_DNS_WARN("A query timeout or loop error for {}", domain);
+        LOG_DNS_WARN("A record query timeout or loop error for {}", domain);
         return false;
     }
-    if (query_status != ARES_SUCCESS) {
-        LOG_DNS_WARN("A query failed for {}: {}", domain, ares_strerror(query_status));
+
+    if (ctx->second != ARES_SUCCESS) {
+        LOG_DNS_WARN("A record query failed for {}: {}", domain, ares_strerror(ctx->second));
         return false;
     }
-    return IDnsResolver::is_valid_ip(ip);
+
+    ip = std::move(ctx->first);
+    return !ip.empty();
 }
 
 bool CAresResolver::query_mx_records(
@@ -432,12 +441,16 @@ bool CAresResolver::query_mx_records(
 
     records.clear();
     std::atomic<bool> done{false};
-    int query_status = ARES_EDESTRUCTION;
-    std::vector<DnsRecord> out_records;
+    
+    // 使用 shared_ptr 确保回调时内存仍然有效
+    auto ctx = std::make_shared<std::pair<std::vector<DnsRecord>, int>>();
+    ctx->second = ARES_EDESTRUCTION;
 
     auto callback = [](void* arg, int status, int /*timeouts*/, unsigned char* abuf, int alen) {
-        auto* ctx = static_cast<std::pair<std::vector<DnsRecord>*, int*>*>(arg);
-        *ctx->second = status;
+        auto ctx = static_cast<std::shared_ptr<std::pair<std::vector<DnsRecord>, int>>*>(arg);
+        if (!ctx) return;
+        
+        (*ctx)->second = status;
         if (status == ARES_SUCCESS) {
             struct ares_mx_reply* mx_out = nullptr;
             int parse = ares_parse_mx_reply(abuf, alen, &mx_out);
@@ -449,15 +462,16 @@ bool CAresResolver::query_mx_records(
                     r.value = p->host ? p->host : "";
                     r.ttl = 0; // not available via ares_parse_mx_reply
                     r.priority = p->priority;
-                    ctx->first->push_back(std::move(r));
+                    (*ctx)->first.push_back(std::move(r));
                 }
                 ares_free_data(mx_out);
             }
         }
+        delete ctx;
     };
 
-    std::pair<std::vector<DnsRecord>*, int*> ctx{&out_records, &query_status};
-    ares_query(channel_, domain.c_str(), ARES_CLASS_IN, ARES_REC_TYPE_MX, callback, &ctx);
+    auto* ctx_ptr = new std::shared_ptr<std::pair<std::vector<DnsRecord>, int>>(ctx);
+    ares_query(channel_, domain.c_str(), ARES_CLASS_IN, ARES_REC_TYPE_MX, callback, ctx_ptr);
 
     bool loop_ok = run_event_loop(timeout, done);
     done.store(true);
@@ -467,12 +481,12 @@ bool CAresResolver::query_mx_records(
         return false;
     }
 
-    if (query_status != ARES_SUCCESS) {
-        LOG_DNS_WARN("MX query failed for {}: {}", domain, ares_strerror(query_status));
+    if (ctx->second != ARES_SUCCESS) {
+        LOG_DNS_WARN("MX query failed for {}: {}", domain, ares_strerror(ctx->second));
         return false;
     }
 
-    records = std::move(out_records);
+    records = std::move(ctx->first);
     return !records.empty();
 }
 

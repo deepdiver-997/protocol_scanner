@@ -1,6 +1,0 @@
-gmail-smtp-in.l.google.com
-smtp.qq.com
-outlook.com
-qq.com
-163.com
-example.com

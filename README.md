@@ -65,8 +65,11 @@ EXTRA_CMAKE_ARGS="-DENABLE_LOGGING=OFF" ./build.sh Release clean
 ./tests/run_smoke.sh
 ```
 
-### Example Domain File
+### Input File Formats
 
+The scanner supports multiple input formats:
+
+#### 1. Domain Names (One per line)
 ```
 gmail.com
 outlook.com
@@ -74,6 +77,38 @@ qq.com
 163.com
 example.com
 ```
+
+#### 2. IP Addresses (Auto-detected, no DNS lookup)
+```
+8.8.8.8
+114.114.114.114
+1.1.1.1
+```
+
+#### 3. Mixed Domains and IPs
+```
+# Google DNS
+8.8.8.8
+# Baidu
+baidu.com
+# Cloudflare DNS  
+1.1.1.1
+# Alibaba
+alibaba.com
+```
+
+#### 4. IP Ranges (CSV format: start_ip,end_ip)
+```
+192.168.1.1,192.168.1.10
+10.0.0.0,10.0.0.255
+```
+
+**Smart Features**:
+- **Auto IP Detection**: If input is valid IPv4, skips DNS resolution (faster)
+- **Comments**: Lines starting with `#` or `;` are ignored
+- **Whitespace**: Leading/trailing whitespace is automatically trimmed
+- **Large Scale**: Producer-consumer architecture with backpressure handles 1M+ targets
+- **Memory Efficient**: Targets queue size limited to `targets_max_size` (default: 1M)
 
 ## Architecture Overview
 
@@ -242,6 +277,14 @@ Uses **c-ares** library for async DNS resolution:
 - A records (domain → IP)
 - MX records (mail servers)
 
+**Optimization Features**:
+- **Auto IP Detection**: Detects pre-resolved IPv4 addresses and skips DNS queries entirely
+  - Input: `8.8.8.8` → Skips DNS, goes directly to protocol probes
+  - Input: `baidu.com` → Performs DNS resolution, then protocol probes
+- **Async Resolution**: Non-blocking c-ares callback mechanism
+- **Timeout Management**: Configurable DNS timeout with automatic retries
+- **Memory Safe**: Uses heap-allocated shared_ptr for async callback context
+
 ### 6. Logging System
 
 **File**: `include/scanner/common/logger.h`
@@ -319,6 +362,58 @@ Controls max in-flight probes:
 - Small (10-50): Low memory, less parallelism
 - Medium (100-500): **Balanced**
 - Large (1000+): High parallelism, more memory usage
+
+### DNS Optimization
+
+For better performance when scanning large IP lists:
+
+```bash
+# Pre-resolved IPs (no DNS overhead, fastest)
+# Example: AD.csv with 1M IPs
+./build/scanner --domains ad.csv --scan
+
+# Mixed domains and IPs (auto-optimized)
+# IPs skip DNS, domains perform resolution
+./build/scanner --domains mixed.txt --scan
+
+# Pure domains (performs DNS for all)
+./build/scanner --domains domains.txt --scan
+```
+
+**Typical Performance**:
+- Pure IPs: ~10,000-50,000 targets/sec (network-limited)
+- Mixed: ~5,000-20,000 targets/sec (DNS adds latency)
+- Pure domains: ~1,000-5,000 targets/sec (DNS resolution bottleneck)
+
+### Input File Best Practices
+
+For large-scale scans (1M+ targets):
+
+1. **Use pre-resolved IPs when possible**
+   ```
+   # Fast: Direct IP addresses
+   192.168.1.1
+   192.168.1.2
+   ```
+
+2. **Batch by network/country**
+   ```
+   # Use IP ranges instead of individual IPs
+   # Format: start_ip,end_ip (auto-expands)
+   192.168.1.0,192.168.1.255
+   ```
+
+3. **Tune targets_max_size in config**
+   ```json
+   "scanner": {
+     "targets_max_size": 1000000  // Adjust based on available memory
+   }
+   ```
+
+4. **Monitor memory usage**
+   - Each target in queue: ~100-200 bytes
+   - 1M targets = ~100-200 MB queue memory
+   - Actual memory will be higher due to protocol objects
 
 ## Build Options
 

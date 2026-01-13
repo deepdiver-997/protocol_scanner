@@ -139,6 +139,9 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/pop3_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/imap_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/http_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ftp_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/telnet_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ssh_protocol.cpp
 )
 
 set(ALL_SRCS ${SCANNER_SRCS} ${PROTOCOL_SRCS})
@@ -182,33 +185,6 @@ target_link_libraries(scanner PRIVATE ${CARES_TARGET})
 
 # 要求特性
 target_compile_features(scanner PRIVATE cxx_std_20)
-
-# =====================
-# 测试目标
-# =====================
-add_executable(smtp_probe_test
-    ${CMAKE_SOURCE_DIR}/tests/smtp_probe_test.cpp
-    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/smtp_protocol.cpp
-)
-target_include_directories(smtp_probe_test PRIVATE
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/OuterLib
-)
-if(TARGET Boost::system)
-    target_link_libraries(smtp_probe_test PRIVATE Boost::system)
-else()
-    target_link_libraries(smtp_probe_test PRIVATE ${Boost_LIBRARIES})
-endif()
-target_link_libraries(smtp_probe_test PRIVATE Threads::Threads)
-if(TARGET fmt::fmt)
-    target_link_libraries(smtp_probe_test PRIVATE fmt::fmt)
-endif()
-if(JSON_TARGET)
-    target_link_libraries(smtp_probe_test PRIVATE ${JSON_TARGET})
-endif()
-if(NOT ENABLE_LOGGING)
-    target_compile_definitions(smtp_probe_test PRIVATE SCANNER_DISABLE_LOGGING)
-endif()
 
 # =====================
 # 安装规则

@@ -48,6 +48,17 @@ public:
         return true;
     }
 
+    // 非阻塞弹出
+    bool try_pop(T& out) {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (queue_.empty()) {
+            return false;
+        }
+        out = std::move(queue_.front());
+        queue_.pop();
+        return true;
+    }
+
     void stop() {
         {
             std::lock_guard<std::mutex> lock(mutex_);

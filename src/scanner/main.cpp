@@ -64,6 +64,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("dns_timeout_ms")) config.dns_timeout = std::chrono::milliseconds(s["dns_timeout_ms"]);
                 if (s.contains("probe_timeout_ms")) config.probe_timeout = std::chrono::milliseconds(s["probe_timeout_ms"]);
                 if (s.contains("retry_count")) config.retry_count = s["retry_count"];
+                if (s.contains("only_success")) config.only_success = s["only_success"];
             }
 
             // 加载协议配置
@@ -80,6 +81,15 @@ ScannerConfig load_config(const string& config_file) {
                 }
                 if (p.contains("HTTP")) {
                     if (p["HTTP"].contains("enabled")) config.enable_http = p["HTTP"]["enabled"];
+                }
+                if (p.contains("TELNET")) {
+                    if (p["TELNET"].contains("enabled")) config.enable_telnet = p["TELNET"]["enabled"];
+                }
+                if (p.contains("FTP")) {
+                    if (p["FTP"].contains("enabled")) config.enable_ftp = p["FTP"]["enabled"];
+                }
+                if (p.contains("SSH")) {
+                    if (p["SSH"].contains("enabled")) config.enable_ssh = p["SSH"]["enabled"];
                 }
             }
 
@@ -101,8 +111,10 @@ ScannerConfig load_config(const string& config_file) {
 
             LOG_CORE_INFO("Batch size: {}", config.batch_size);
             LOG_CORE_INFO("Probe timeout: {} ms", std::chrono::duration_cast<std::chrono::milliseconds>(config.probe_timeout).count());
-            LOG_CORE_INFO("SMTP: {}, POP3: {}, IMAP: {}, HTTP: {}",
-                config.enable_smtp, config.enable_pop3, config.enable_imap, config.enable_http);
+            LOG_CORE_INFO("SMTP: {}, POP3: {}, IMAP: {}, HTTP: {}, FTP: {}, TELNET: {}, SSH: {}",
+                config.enable_smtp, config.enable_pop3, config.enable_imap, config.enable_http,
+                config.enable_ftp, config.enable_telnet, config.enable_ssh);
+            LOG_CORE_INFO("Only success: {}", config.only_success);
         } catch (const nlohmann::json::exception& e) {
             LOG_CORE_WARN("Failed to parse config file '{}': {}", config_file, e.what());
             LOG_CORE_WARN("Using default configuration");
@@ -163,10 +175,9 @@ int main(int argc, char* argv[]) {
             ("threads,t", po::value<int>()->default_value(4), "Number of threads (deprecated, use --io-threads)")
             ("io-threads", po::value<int>(), "IO thread pool size (network I/O)")
             ("cpu-threads", po::value<int>(), "CPU thread pool size (protocol processing)")
-            ("config,c", po::value<string>()->default_value("./config/scanner_config.json"),
-             "Configuration file")
+            ("config,c", po::value<string>(), "Configuration file")
             ("protocols,p", po::value<string>(),
-             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP)")
+             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH)")
             ("format,f", po::value<string>()->default_value("text"),
              "Output format (text,json,csv,report)")
             ("only-success", "Only output successful probes (hide failures)")
@@ -174,6 +185,10 @@ int main(int argc, char* argv[]) {
             ("no-pop3", "Disable POP3 scanning")
             ("no-imap", "Disable IMAP scanning")
             ("enable-http", "Enable HTTP scanning")
+            ("enable-ftp", "Enable FTP scanning")
+            ("enable-telnet", "Enable Telnet scanning")
+            ("no-ftp", "Disable FTP scanning")
+            ("enable-ssh", "Enable SSH scanning")
             ("scan-all-ports", "Scan all available ports instead of protocol defaults")
             ("vendor-file", po::value<string>(),
              "Vendor pattern file (default: ./config/vendors.json)")
@@ -244,29 +259,41 @@ int main(int argc, char* argv[]) {
             return 0;
         }
 
-        // 加载配置
-        string config_file = vm["config"].as<string>();
-        ScannerConfig config = load_config(config_file);
+        // 加载配置：优先使用 --config 指定的文件，如果没有则使用默认路径
+        string default_config_path = "./config/scanner_config.json";
+        string config_file_to_load = "";
+
+        if (vm.count("config")) {
+            config_file_to_load = vm["config"].as<string>();
+            if (!std::filesystem::exists(config_file_to_load)) {
+                LOG_CORE_WARN("Specified config file '{}' not found, falling back to default '{}'", 
+                             config_file_to_load, default_config_path);
+                config_file_to_load = default_config_path;
+            }
+        } else {
+            config_file_to_load = default_config_path;
+        }
+
+        ScannerConfig config = load_config(config_file_to_load);
 
         // 覆盖配置（命令行参数优先）
-        // 注意：使用 count 判断用户是否显式传递，因为 --threads 有默认值
-        bool has_threads_override = false;
+        if (vm.count("only-success")) {
+            config.only_success = true;
+        }
+        
         bool has_io_threads = vm.count("io-threads");
         bool has_cpu_threads = vm.count("cpu-threads");
 
         if (has_io_threads) {
             config.io_thread_count = vm["io-threads"].as<int>();
-            has_threads_override = true;
         }
         if (has_cpu_threads) {
             config.cpu_thread_count = vm["cpu-threads"].as<int>();
-            has_threads_override = true;
         }
 
         // 如果显式传递 --threads 且没有分别指定 io/cpu 线程，使用向后兼容逻辑
         // 需要检查 --threads 的原始值是否为默认值
         const auto& threads_arg = vm["threads"];
-        auto threads_default_value = po::value<int>()->default_value(4);
         bool is_threads_explicit = !threads_arg.defaulted();
 
         if (is_threads_explicit && !has_io_threads && !has_cpu_threads) {
@@ -288,6 +315,8 @@ int main(int argc, char* argv[]) {
         if (vm.count("no-pop3")) config.enable_pop3 = false;
         if (vm.count("no-imap")) config.enable_imap = false;
         if (vm.count("enable-http")) config.enable_http = true;
+        if (vm.count("enable-telnet")) config.enable_telnet = true;
+        if (vm.count("enable-ssh")) config.enable_ssh = true;
         if (vm.count("protocols")) {
             config.custom_protocols.clear();
             string protos = vm["protocols"].as<string>();
@@ -302,11 +331,15 @@ int main(int argc, char* argv[]) {
             config.enable_pop3 = false;
             config.enable_imap = false;
             config.enable_http = false;
+            config.enable_telnet = false;
+            config.enable_ssh = false;
             for (auto& p : config.custom_protocols) {
                 if (p == "SMTP") config.enable_smtp = true;
                 else if (p == "POP3") config.enable_pop3 = true;
                 else if (p == "IMAP") config.enable_imap = true;
                 else if (p == "HTTP") config.enable_http = true;
+                else if (p == "TELNET") config.enable_telnet = true;
+                else if (p == "SSH") config.enable_ssh = true;
             }
         }
         if (vm.count("scan-all-ports")) {
@@ -367,11 +400,17 @@ int main(int argc, char* argv[]) {
         }
 
         if (vm.count("scan")) {
-            // 直接执行扫描并打印到终端
-            LOG_CORE_INFO("Starting scan...");
+            // 异步扫描模式
+            LOG_CORE_INFO("Starting scan with input source: {}", domains_file);
             Scanner scanner(config);
             auto start_tp = std::chrono::steady_clock::now();
-            auto reports = scanner.scan_domains(domains);
+            
+            // 启动扫描（异步）
+            scanner.start(domains_file);
+            
+            // 等待完成并获取结果（最多等待 1 小时）
+            auto reports = scanner.get_results(std::chrono::milliseconds(-1));
+            
             auto end_tp = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_tp - start_tp);
             (void)duration; // silence unused when logging disabled
@@ -394,7 +433,7 @@ int main(int argc, char* argv[]) {
             }
 
             // 检查是否只输出成功结果
-            bool only_success = vm.count("only-success") > 0;
+            bool only_success = config.only_success;
 
             // 生成文本结果（当前版本将结果打印为文本；JSON/CSV 可后续由 ResultHandler 实现）
             std::ostringstream oss;
@@ -484,6 +523,7 @@ int main(int argc, char* argv[]) {
                     if (ext == "json" || ext == "csv") {
                         ResultHandler rh;
                         rh.set_format(ext == "json" ? OutputFormat::JSON : OutputFormat::CSV);
+                        rh.set_only_success(config.only_success);
                         ofs << rh.reports_to_string(reports);
                     } else {
                         ofs << oss.str();

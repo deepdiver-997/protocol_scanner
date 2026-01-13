@@ -12,27 +12,48 @@ ScanSession::ScanSession(
     Timeout dns_timeout,
     Timeout probe_timeout,
     ProbeMode mode,
-    const std::vector<std::unique_ptr<IProtocol>>& protocols,
-    Callback on_complete
+    const std::vector<std::unique_ptr<IProtocol>>& protocols
 )
     : target_(target),
       dns_resolver_(std::move(resolver)),
       dns_timeout_(dns_timeout),
-      probe_timeout_(probe_timeout),
-      on_complete_(std::move(on_complete)) {
-    // 解析域名 -> IP（若未提供 IP 且域名有效）
-    if (target_.ip.empty() && !target_.domain.empty() && dns_resolver_) {
-        DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
-        dns_result_ = dr;
-        if (dr.success && !dr.ip.empty()) {
-            target_.ip = dr.ip;
-        } else if (!dr.ip.empty()) {
-            target_.ip = dr.ip;
-        }
-    } else {
+      probe_timeout_(probe_timeout) {
+    // 解析域名 -> IP
+    if (!target_.ip.empty()) {
+        // 已经有IP，直接使用
         dns_result_.domain = target_.domain;
         dns_result_.ip = target_.ip;
-        dns_result_.success = !target_.ip.empty();
+        dns_result_.success = true;
+        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, target_.ip);
+    } else if (!target_.domain.empty() && dns_resolver_) {
+        // 没有IP，需要DNS解析
+        int max_retries = 2; // 默认尝试 2 次
+        for (int i = 0; i <= max_retries; ++i) {
+            DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
+            dns_result_ = dr;
+            if (dr.success && !dr.ip.empty()) {
+                target_.ip = dr.ip;
+                break;
+            } else if (!dr.ip.empty()) {
+                target_.ip = dr.ip;
+                break;
+            }
+            if (i < max_retries) {
+                LOG_DNS_WARN("DNS resolution failed for {}, retrying ({}/{})...", 
+                            target_.domain, i + 1, max_retries);
+            }
+        }
+        
+        if (target_.ip.empty()) {
+            LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
+            set_state(State::PENDING, State::FAILED);
+            set_error("DNS Resolution Failed");
+        }
+    } else {
+        // 既没有IP也没有有效的域名
+        dns_result_.domain = target_.domain;
+        dns_result_.ip = target_.ip;
+        dns_result_.success = false;
     }
 
     probe_mode_ = mode;
@@ -73,7 +94,6 @@ bool ScanSession::start_one_probe(
     Timeout timeout
 ) {
     if (target_.ip.empty()) {
-        LOG_CORE_WARN("No IP address available for domain: {}", target_.domain);
         return false;
     }
 
@@ -108,7 +128,11 @@ bool ScanSession::start_one_probe(
 
     // 提交任务到扫描线程池，实际 IO 在 exec 所属 io_context
     scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout]() {
+        // 优先使用域名作为 target，如果没有域名则使用 IP
+        const std::string& target = target_.domain.empty() ? target_.ip : target_.domain;
+        
         proto_ptr->async_probe(
+            target,
             target_.ip,
             port,
             timeout,

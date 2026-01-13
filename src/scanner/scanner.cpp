@@ -6,11 +6,17 @@
 #include "scanner/protocols/pop3_protocol.h"
 #include "scanner/protocols/imap_protocol.h"
 #include "scanner/protocols/http_protocol.h"
+#include "scanner/protocols/ftp_protocol.h"
+#include "scanner/protocols/telnet_protocol.h"
+#include "scanner/protocols/ssh_protocol.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
+#include <filesystem>
 
 namespace scanner {
+
+namespace fs = std::filesystem;
 
 Scanner::Scanner(const ScannerConfig& config)
     : config_(config) {
@@ -28,6 +34,10 @@ Scanner::Scanner(const ScannerConfig& config)
 }
 
 Scanner::~Scanner() {
+    stop();
+    if (input_thread_.joinable()) input_thread_.join();
+    if (result_thread_.joinable()) result_thread_.join();
+    if (scan_thread_.joinable()) scan_thread_.join();
     if (scan_pool_) scan_pool_->shutdown();
     if (io_pool_) io_pool_->shutdown();
 }
@@ -38,6 +48,9 @@ void Scanner::init_protocols() {
     if (config_.enable_pop3) protocols_.push_back(std::make_unique<Pop3Protocol>());
     if (config_.enable_imap) protocols_.push_back(std::make_unique<ImapProtocol>());
     if (config_.enable_http) protocols_.push_back(std::make_unique<HttpProtocol>());
+    if (config_.enable_ftp) protocols_.push_back(std::make_unique<FtpProtocol>());
+    if (config_.enable_telnet) protocols_.push_back(std::make_unique<TelnetProtocol>());
+    if (config_.enable_ssh) protocols_.push_back(std::make_unique<SshProtocol>());
 }
 
 bool Scanner::is_protocol_enabled(const std::string& name) const {
@@ -45,7 +58,248 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
     if (name == "POP3") return config_.enable_pop3;
     if (name == "IMAP") return config_.enable_imap;
     if (name == "HTTP") return config_.enable_http;
+    if (name == "FTP") return config_.enable_ftp;
+    if (name == "TELNET") return config_.enable_telnet;
+    if (name == "SSH") return config_.enable_ssh;
     return false;
+}
+
+void Scanner::start(const std::string& source_path) {
+    stop_ = false;
+    input_done_ = false;
+    
+    // 启动三个线程
+    input_thread_ = std::thread([this, source_path]() {
+        try {
+            auto targets = load_domains(source_path);
+            
+            for (const auto& target_str : targets) {
+                if (stop_) break;
+                
+                // 等待队列大小低于限制
+                {
+                    std::unique_lock<std::mutex> lock(targets_mutex_);
+                    targets_cv_.wait(lock, [this]() {
+                        return targets_.size() < config_.targets_max_size || stop_;
+                    });
+                }
+                
+                if (stop_) break;
+                
+                // 插入目标，检查是否已经是IP
+                {
+                    std::lock_guard<std::mutex> lock(targets_mutex_);
+                    ScanTarget t;
+                    
+                    // 检查是否为IP地址
+                    if (is_valid_ip_address(target_str)) {
+                        t.domain = target_str;  // 存储原始内容
+                        t.ip = target_str;      // 直接作为IP
+                    } else {
+                        t.domain = target_str;  // 作为域名
+                    }
+                    
+                    targets_.push_back(t);
+                }
+            }
+            
+            input_done_ = true;
+            LOG_CORE_INFO("Input parsing completed: {} targets loaded", targets.size());
+        } catch (const std::exception& e) {
+            LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
+            input_done_ = true;
+        }
+    });
+    
+    result_thread_ = std::thread([this]() { result_handler_thread(); });
+    scan_thread_ = std::thread([this]() { scan_loop(); });
+    
+    LOG_CORE_INFO("Scanner started with input source: {}", source_path);
+}
+
+void Scanner::result_handler_thread() {
+    auto last_flush = std::chrono::steady_clock::now();
+    
+    while (!stop_ || !result_queue_.empty()) {
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
+        
+        // 定时刷写结果
+        if (elapsed >= config_.result_flush_interval) {
+            std::vector<ScanReport> batch;
+            ScanReport rep;
+            
+            while (result_queue_.try_pop(rep)) {
+                batch.push_back(std::move(rep));
+            }
+            
+            if (!batch.empty()) {
+                {
+                    std::lock_guard<std::mutex> lock(reports_mutex_);
+                    completed_reports_.insert(completed_reports_.end(), 
+                                            std::make_move_iterator(batch.begin()),
+                                            std::make_move_iterator(batch.end()));
+                }
+                reports_cv_.notify_one();
+                
+                // 写入文件
+                if (!report_ofs_.is_open()) {
+                    std::error_code ec;
+                    fs::create_directories(config_.output_dir, ec);
+                    std::string out_path = config_.output_dir;
+                    if (!out_path.empty() && out_path.back() != '/') out_path += "/";
+                    out_path += "scan_results.txt";
+                    report_ofs_.open(out_path, std::ios::app);
+                }
+                
+                if (report_ofs_.is_open()) {
+                    for (const auto& r : batch) {
+                        report_ofs_ << r.target.domain << " (" << r.target.ip << ")\n";
+                        for (const auto& pr : r.protocols) {
+                            report_ofs_ << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port;
+                            if (pr.accessible) {
+                                report_ofs_ << " -> OK\n";
+                                if (!pr.attrs.banner.empty()) {
+                                    report_ofs_ << "    banner: " << pr.attrs.banner << "\n";
+                                }
+                            } else {
+                                report_ofs_ << " -> FAIL\n";
+                            }
+                        }
+                        report_ofs_ << "\n";
+                    }
+                    report_ofs_.flush();
+                }
+            }
+            
+            last_flush = now;
+        }
+        
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    if (report_ofs_.is_open()) {
+        report_ofs_.close();
+    }
+    
+    LOG_CORE_INFO("Result handler thread finished");
+}
+
+void Scanner::scan_loop() {
+    auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
+
+    auto estimate_quota = [this]() -> int {
+        int base = std::max(1, config_.thread_count);
+        int quota = base * 2;
+        quota = std::min(quota, config_.batch_size);
+        return quota;
+    };
+
+    while (!stop_) {
+        int quota = estimate_quota();
+
+        // 移除已完成的 session，并推送报告
+        sessions_.erase(
+            std::remove_if(
+                sessions_.begin(),
+                sessions_.end(),
+                [this](const std::unique_ptr<ScanSession>& s) {
+                    if (s && s->ready_to_release()) {
+                        ScanReport rep;
+                        rep.target = { s->domain(), s->dns_result().ip, {}, 0 };
+                        rep.protocols = s->protocol_results();
+                        rep.total_time = config_.probe_timeout;
+                        result_queue_.push(rep);
+                        return true;
+                    }
+                    return false;
+                }
+            ),
+            sessions_.end()
+        );
+
+        // 先给现有 session 分配任务
+        for (auto& s : sessions_) {
+            if (!s) continue;
+            while (quota > 0 && s->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                --quota;
+            }
+            if (quota == 0) break;
+        }
+
+        // 创建新 session 并分配任务
+        while (quota > 0) {
+            ScanTarget t;
+            {
+                std::lock_guard<std::mutex> lock(targets_mutex_);
+                if (targets_.empty()) {
+                    // 唤醒输入线程，告知可以继续插入
+                    targets_cv_.notify_one();
+                    break;
+                }
+                t = targets_.back();
+                targets_.pop_back();
+            }
+
+            auto sess = std::make_unique<ScanSession>(
+                t,
+                dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                config_.dns_timeout,
+                config_.probe_timeout,
+                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                protocols_
+            );
+
+            while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                --quota;
+            }
+
+            sessions_.push_back(std::move(sess));
+        }
+
+        // 检查是否完成
+        bool has_pending = false;
+        for (auto& s : sessions_) {
+            if (s && s->tasks_completed() < s->tasks_total()) {
+                has_pending = true;
+                break;
+            }
+        }
+        
+        bool all_done = input_done_ && targets_.empty() && sessions_.empty() && !has_pending;
+        if (all_done) {
+            break;
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+    
+    LOG_CORE_INFO("Scan loop completed");
+}
+
+std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) {
+    std::unique_lock<std::mutex> lock(reports_mutex_);
+    
+    if (timeout.count() > 0) {
+        reports_cv_.wait_for(lock, timeout, [this]() {
+            return input_done_ && targets_.empty() && sessions_.empty();
+        });
+    } else if (timeout.count() == 0) {
+        // 不等待，直接返回当前结果
+    } else {
+        // 无限等待
+        reports_cv_.wait(lock, [this]() {
+            return input_done_ && targets_.empty() && sessions_.empty();
+        });
+    }
+    
+    return std::move(completed_reports_);
+}
+
+void Scanner::stop() {
+    stop_ = true;
+    targets_cv_.notify_all();
+    reports_cv_.notify_all();
 }
 
 std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& domains) {
@@ -53,28 +307,19 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
     {
         std::lock_guard<std::mutex> lock(targets_mutex_);
         for (const auto& d : domains) {
-            ScanTarget t; t.domain = d;
+            ScanTarget t;
+            t.domain = d;
             targets_.push_back(t);
             expected++;
         }
     }
 
-    start();
+    // 创建虚拟输入（标记已完成）
+    input_done_ = true;
 
-    std::vector<ScanReport> reports;
-    reports.reserve(expected);
-    for (std::size_t i = 0; i < expected; ++i) {
-        ScanReport rep;
-        if (result_queue_.pop(rep)) {
-            reports.push_back(std::move(rep));
-        }
-    }
-    return reports;
-}
-
-void Scanner::start() {
+    // 启动扫描线程
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
-
+    
     auto estimate_quota = [this]() -> int {
         int base = std::max(1, config_.thread_count);
         int quota = base * 2;
@@ -130,8 +375,7 @@ void Scanner::start() {
                 config_.dns_timeout,
                 config_.probe_timeout,
                 config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                protocols_,
-                [](ScanSession* /*s*/) {}
+                protocols_
             );
 
             while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
@@ -145,7 +389,10 @@ void Scanner::start() {
         if (quota > 0) {
             bool has_pending = false;
             for (auto& s : sessions_) {
-                if (s && s->tasks_completed() < s->tasks_total()) { has_pending = true; break; }
+                if (s && s->tasks_completed() < s->tasks_total()) {
+                    has_pending = true;
+                    break;
+                }
             }
             if (!has_pending) {
                 std::lock_guard<std::mutex> lock(targets_mutex_);
@@ -157,11 +404,23 @@ void Scanner::start() {
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
+
+    std::vector<ScanReport> reports;
+    reports.reserve(expected);
+    for (std::size_t i = 0; i < expected; ++i) {
+        ScanReport rep;
+        if (result_queue_.try_pop(rep)) {
+            reports.push_back(std::move(rep));
+        }
+    }
+    return reports;
 }
+
 ScanReport Scanner::scan_target(const ScanTarget& target) {
     auto out = scan_domains({target.domain});
     return out.empty() ? ScanReport{} : out.front();
 }
+
 std::vector<ScanReport> Scanner::scan_targets(const std::vector<ScanTarget>& targets) {
     std::vector<std::string> domains;
     domains.reserve(targets.size());

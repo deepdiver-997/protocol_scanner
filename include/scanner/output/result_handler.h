@@ -33,6 +33,9 @@ public:
     // 设置输出格式
     void set_format(OutputFormat format) { format_ = format; }
 
+    // 设置是否仅输出成功结果
+    void set_only_success(bool only) { only_success_ = only; }
+
     // 保存单个报告
     void save_report(const ScanReport& report, const std::string& filename);
 
@@ -72,6 +75,7 @@ private:
     std::string format_port_mask(uint8_t mask) const;
 
     OutputFormat format_ = OutputFormat::TEXT;
+    bool only_success_ = false;
 };
 
 // =====================

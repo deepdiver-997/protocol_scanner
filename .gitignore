@@ -8,8 +8,8 @@ build/
 *.exe
 
 # Output files
-result/
-logs/
+result/**
+logs/**
 scan_results.*
 *.json.bak
 *.csv.bak
@@ -49,3 +49,5 @@ tests/output/*.json
 tests/output/*.txt
 tests/output/*.csv
 !tests/output/.gitkeep
+data/
+tests/

@@ -55,7 +55,8 @@ struct ProbeContext {
 };
 
 void Pop3Protocol::async_probe(
-    const std::string& host,
+    const std::string& target,
+    const std::string& ip,
     Port port,
     Timeout timeout,
     boost::asio::any_io_executor exec,
@@ -63,7 +64,7 @@ void Pop3Protocol::async_probe(
 ) {
     auto ctx = std::make_shared<ProbeContext>(std::move(exec), timeout, std::move(on_complete));
     ctx->result.protocol = name();
-    ctx->result.host = host;
+    ctx->result.host = target;
     ctx->result.port = port;
     ctx->start_time = std::chrono::steady_clock::now();
 
@@ -76,7 +77,7 @@ void Pop3Protocol::async_probe(
     });
 
     boost::system::error_code ec;
-    auto address = asio::ip::make_address(host, ec);
+    auto address = asio::ip::make_address(ip, ec);
     if (ec) {
         ctx->finish_error("Invalid address: " + ec.message());
         return;

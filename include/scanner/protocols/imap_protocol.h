@@ -24,7 +24,8 @@ public:
     }
 
     void async_probe(
-        const std::string& host,
+        const std::string& target,
+        const std::string& ip,
         Port port,
         Timeout timeout,
         boost::asio::any_io_executor exec,

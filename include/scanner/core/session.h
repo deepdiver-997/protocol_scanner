@@ -50,8 +50,7 @@ public:
         Timeout dns_timeout,
         Timeout probe_timeout,
         ProbeMode mode,
-        const std::vector<std::unique_ptr<IProtocol>>& protocols,
-        Callback on_complete
+        const std::vector<std::unique_ptr<IProtocol>>& protocols
     );
 
     ~ScanSession() = default;
@@ -77,7 +76,13 @@ public:
     void mark_task_completed() { tasks_completed_.fetch_add(1, std::memory_order_relaxed); }
     std::size_t tasks_total() const { return tasks_total_.load(std::memory_order_relaxed); }
     std::size_t tasks_completed() const { return tasks_completed_.load(std::memory_order_relaxed); }
-    bool ready_to_release() const { return tasks_total() > 0 && tasks_completed() >= tasks_total(); }
+    bool ready_to_release() const { 
+        // 如果没有 IP 且域名非空，说明域名解析失败，应该允许释放
+        if (target_.ip.empty() && !target_.domain.empty()) return true;
+        // 如果总任务数为 0，说明没有任何要扫的，也该释放
+        if (tasks_total() == 0) return true;
+        return tasks_completed() >= tasks_total(); 
+    }
 
     // ====== 访问器 ======
     const std::string& domain() const { return target_.domain; }

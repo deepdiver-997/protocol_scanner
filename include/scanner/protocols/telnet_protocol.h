@@ -8,15 +8,15 @@ namespace scanner {
 using boost::asio::ip::tcp;
 namespace asio = boost::asio;
 
-class HttpProtocol : public IProtocol {
+class TelnetProtocol : public IProtocol {
 public:
-    HttpProtocol() = default;
-    virtual ~HttpProtocol() = default;
+    TelnetProtocol() = default;
+    virtual ~TelnetProtocol() = default;
 
-    std::string name() const override { return "HTTP"; }
+    std::string name() const override { return "TELNET"; }
 
     std::vector<Port> default_ports() const override {
-        return {80, 443, 8080, 8443};
+        return {23};
     }
 
     Timeout default_timeout() const override {
@@ -36,7 +36,6 @@ public:
         const std::string& response,
         ProtocolAttributes& attrs
     ) override;
-
 };
 
 } // namespace scanner

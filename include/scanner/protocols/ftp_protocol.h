@@ -8,19 +8,23 @@ namespace scanner {
 using boost::asio::ip::tcp;
 namespace asio = boost::asio;
 
-class HttpProtocol : public IProtocol {
+class FtpProtocol : public IProtocol {
 public:
-    HttpProtocol() = default;
-    virtual ~HttpProtocol() = default;
+    FtpProtocol() = default;
+    virtual ~FtpProtocol() = default;
 
-    std::string name() const override { return "HTTP"; }
+    std::string name() const override { return "FTP"; }
 
     std::vector<Port> default_ports() const override {
-        return {80, 443, 8080, 8443};
+        return {21, 990};
     }
 
     Timeout default_timeout() const override {
         return Timeout(3000);
+    }
+
+    bool requires_tls(Port port) const override {
+        return port == 990;
     }
 
     void async_probe(
@@ -36,7 +40,6 @@ public:
         const std::string& response,
         ProtocolAttributes& attrs
     ) override;
-
 };
 
 } // namespace scanner

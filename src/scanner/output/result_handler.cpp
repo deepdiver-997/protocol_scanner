@@ -14,6 +14,8 @@ std::string ResultHandler::to_text(const ScanReport& report) const {
     std::ostringstream oss;
     oss << report.target.domain << " (" << report.target.ip << ")\n";
     for (const auto& pr : report.protocols) {
+        if (only_success_ && !pr.accessible) continue;
+        
         oss << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port
             << " -> " << (pr.accessible ? "OK" : "FAIL");
         if (!pr.error.empty()) oss << " (" << pr.error << ")";
@@ -49,6 +51,8 @@ std::string ResultHandler::to_csv(const ScanReport& report) const {
     // header
     oss << "domain,ip,protocol,host,port,accessible,error,vendor,banner,response_time_ms,details\n";
     for (const auto& pr : report.protocols) {
+        if (only_success_ && !pr.accessible) continue;
+
         std::string details = format_attributes(pr.attrs);
         // 简单转义逗号与引号
         auto esc = [](const std::string& s) {
@@ -76,7 +80,9 @@ std::string ResultHandler::to_csv(const std::vector<ScanReport>& reports) const 
     std::ostringstream oss;
     oss << "domain,ip,protocol,host,port,accessible,error,vendor,banner,response_time_ms,details\n";
     for (const auto& rep : reports) {
-        ResultHandler tmp; tmp.set_format(OutputFormat::CSV);
+        ResultHandler tmp; 
+        tmp.set_format(OutputFormat::CSV);
+        tmp.set_only_success(only_success_);
         std::string body = tmp.to_csv(rep);
         // 跳过重复 header：取第一行之后
         std::istringstream is(body);
@@ -98,6 +104,8 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
     j["total_time_ms"] = report.total_time.count();
     j["protocols"] = nlohmann::json::array();
     for (const auto& pr : report.protocols) {
+        if (only_success_ && !pr.accessible) continue;
+
         nlohmann::json jp;
         jp["protocol"] = pr.protocol;
         jp["host"] = pr.host;
@@ -163,7 +171,9 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
 std::string ResultHandler::to_json(const std::vector<ScanReport>& reports) const {
     nlohmann::json j = nlohmann::json::array();
     for (const auto& r : reports) {
-        ResultHandler tmp; tmp.set_format(OutputFormat::JSON);
+        ResultHandler tmp; 
+        tmp.set_format(OutputFormat::JSON);
+        tmp.set_only_success(only_success_);
         j.push_back(nlohmann::json::parse(tmp.to_json(r)));
     }
     return j.dump(2);

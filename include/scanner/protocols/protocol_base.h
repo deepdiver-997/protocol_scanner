@@ -116,7 +116,8 @@ public:
 
     // 异步探测入口；实现负责持有自己的 socket 及 buffer 生命周期 通过回调传递结果到session中的队列
     virtual void async_probe(
-        const std::string& host,
+        const std::string& target,  // 目标域名或IP（用于逻辑标识与 Header）
+        const std::string& ip,      // 实际连接的 IP 地址
         Port port,
         Timeout timeout,
         boost::asio::any_io_executor exec,
