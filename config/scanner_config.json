@@ -1,11 +1,11 @@
 {
   "scanner": {
-    "io_thread_count": 24,
+    "io_thread_count": 12,
     "cpu_thread_count": 4,
     "thread_count": 8,
     "batch_size": 100,
     "dns_timeout_ms": 1000,
-    "probe_timeout_ms": 2000,
+    "probe_timeout_ms": 0,
     "retry_count": 1,
     "only_success": true,
     "max_work_count": 100

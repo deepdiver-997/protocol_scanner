@@ -8,6 +8,7 @@
 #include <boost/asio/ip/address_v4.hpp>
 #include <sstream>
 #include <cmath>
+#include <functional>
 
 namespace scanner {
 
@@ -112,15 +113,36 @@ static std::vector<std::string> expand_ip_range(const std::string& start_ip_str,
     return ips;
 }
 
-// 处理单个文件，尝试识别 CSV 格式（IP 段）
-static std::vector<std::string> process_file(const std::string& filename) {
-    std::vector<std::string> result;
+// 将单个文件流式解析为目标并交给处理器
+static size_t process_file_stream(
+    const std::string& filename,
+    size_t offset,
+    size_t& skipped,
+    const std::function<bool(const std::string&)>& handle_target,
+    bool& aborted
+) {
     std::ifstream in(filename);
     if (!in) {
         LOG_FILE_IO_ERROR("Failed to open file: {}", filename);
-        return result;
+        return 0;
     }
 
+    auto dispatch = [&](const std::string& value, bool& delivered) -> bool {
+        delivered = false;
+        if (value.empty()) return true;
+        if (skipped < offset) {
+            ++skipped;
+            return true;
+        }
+        if (!handle_target(value)) {
+            aborted = true;
+            return false;
+        }
+        delivered = true;
+        return true;
+    };
+
+    size_t emitted = 0;
     std::string line;
     while (std::getline(in, line)) {
         line = trim(line);
@@ -129,42 +151,56 @@ static std::vector<std::string> process_file(const std::string& filename) {
         // 检查是否为 CIDR 记号（IP/PREFIX）
         if (line.find('/') != std::string::npos) {
             auto ips = expand_cidr(line);
-            result.insert(result.end(), ips.begin(), ips.end());
+            for (const auto& ip : ips) {
+                bool delivered = false;
+                if (!dispatch(ip, delivered)) return emitted;
+                if (delivered) ++emitted;
+            }
             continue;
         }
-        
+
         // 尝试判断是否为 IP 段 CSV (start_ip,end_ip,...)
         if (line.find(',') != std::string::npos) {
             std::stringstream ss(line);
             std::string start_ip, end_ip;
             if (std::getline(ss, start_ip, ',') && std::getline(ss, end_ip, ',')) {
-                // 如果前两部分看起来像 IP，则进行扩展
                 auto ips = expand_ip_range(start_ip, end_ip);
-                result.insert(result.end(), ips.begin(), ips.end());
+                for (const auto& ip : ips) {
+                    bool delivered = false;
+                    if (!dispatch(ip, delivered)) return emitted;
+                    if (delivered) ++emitted;
+                }
                 continue;
             }
         }
-        
-        // 普通域名或 IP
-        result.push_back(line);
+
+        bool delivered = false;
+        if (!dispatch(line, delivered)) return emitted;
+        if (delivered) ++emitted;
     }
-    return result;
+
+    return emitted;
 }
 
-std::vector<std::string> load_domains(const std::string& path, size_t offset) {
-    std::vector<std::string> all_targets;
-    
+size_t stream_domains(
+    const std::string& path,
+    size_t offset,
+    const std::function<bool(const std::string&)>& handle_target
+) {
+    size_t total = 0;
+    size_t skipped = 0;
+    bool aborted = false;
+
     try {
         if (fs::is_directory(path)) {
             LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
-                if (entry.is_regular_file()) {
-                    auto targets = process_file(entry.path().string());
-                    all_targets.insert(all_targets.end(), targets.begin(), targets.end());
-                }
+                if (!entry.is_regular_file()) continue;
+                total += process_file_stream(entry.path().string(), offset, skipped, handle_target, aborted);
+                if (aborted) break;
             }
         } else if (fs::is_regular_file(path)) {
-            all_targets = process_file(path);
+            total = process_file_stream(path, offset, skipped, handle_target, aborted);
         } else {
             LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
         }
@@ -172,11 +208,16 @@ std::vector<std::string> load_domains(const std::string& path, size_t offset) {
         LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
     }
 
-    if (offset > 0 && offset < all_targets.size()) {
-        all_targets.erase(all_targets.begin(), all_targets.begin() + offset);
-    }
+    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    return total;
+}
 
-    LOG_FILE_IO_INFO("Total loaded {} targets from {}", all_targets.size(), path);
+std::vector<std::string> load_domains(const std::string& path, size_t offset) {
+    std::vector<std::string> all_targets;
+    stream_domains(path, offset, [&](const std::string& target) {
+        all_targets.push_back(target);
+        return true;
+    });
     return all_targets;
 }
 

@@ -104,43 +104,37 @@ void Scanner::start(const std::string& source_path) {
     // 启动三个线程
     input_thread_ = std::thread([this, source_path]() {
         try {
-            auto targets = load_domains(source_path);
-            
-            // 记录总目标数
-            total_targets_ = static_cast<size_t>(targets.size());
-            
-            for (const auto& target_str : targets) {
-                if (stop_) break;
-                
-                // 等待队列大小低于限制
-                {
-                    std::unique_lock<std::mutex> lock(targets_mutex_);
-                    targets_cv_.wait(lock, [this]() {
-                        return targets_.size() < config_.targets_max_size || stop_;
-                    });
+            size_t loaded_count = 0;
+
+            auto enqueue_target = [this, &loaded_count](const std::string& target_str) -> bool {
+                if (stop_) return false;
+
+                std::unique_lock<std::mutex> lock(targets_mutex_);
+                targets_cv_.wait(lock, [this]() {
+                    return targets_.size() < config_.targets_max_size || stop_;
+                });
+
+                if (stop_) return false;
+
+                ScanTarget t;
+                if (is_valid_ip_address(target_str)) {
+                    t.domain = target_str;
+                    t.ip = target_str;
+                } else {
+                    t.domain = target_str;
                 }
-                
-                if (stop_) break;
-                
-                // 插入目标，检查是否已经是IP
-                {
-                    std::lock_guard<std::mutex> lock(targets_mutex_);
-                    ScanTarget t;
-                    
-                    // 检查是否为IP地址
-                    if (is_valid_ip_address(target_str)) {
-                        t.domain = target_str;  // 存储原始内容
-                        t.ip = target_str;      // 直接作为IP
-                    } else {
-                        t.domain = target_str;  // 作为域名
-                    }
-                    
-                    targets_.push_back(t);
-                }
-            }
-            
+
+                targets_.push_back(std::move(t));
+                ++loaded_count;
+                return true;
+            };
+
+            stream_domains(source_path, 0, enqueue_target);
+
+            total_targets_ = loaded_count;
+
             input_done_ = true;
-            LOG_CORE_INFO("Input parsing completed: {} targets loaded", targets.size());
+            LOG_CORE_INFO("Input parsing completed: {} targets loaded", loaded_count);
         } catch (const std::exception& e) {
             LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
             input_done_ = true;
@@ -243,12 +237,12 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        {
-            std::lock_guard<std::mutex> lock(reports_mutex_);
-            completed_reports_.insert(completed_reports_.end(),
-                                    std::make_move_iterator(batch.begin()),
-                                    std::make_move_iterator(batch.end()));
-        }
+        // {
+        //     std::lock_guard<std::mutex> lock(reports_mutex_);
+        //     completed_reports_.insert(completed_reports_.end(),
+        //                             std::make_move_iterator(batch.begin()),
+        //                             std::make_move_iterator(batch.end()));
+        // }
         reports_cv_.notify_one();
 
         last_flush = std::chrono::steady_clock::now();

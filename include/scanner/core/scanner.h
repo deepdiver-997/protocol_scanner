@@ -31,7 +31,7 @@ struct ScannerConfig {
     int batch_size = 100;            // 批处理大小
     size_t targets_max_size = 100000; // 最大待处理目标数（默认 10 万）
     std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(1000);
-    std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(2000);
+    std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(2000);  // 探测超时时间，0 表示启用动态超时
     int retry_count = 1;             // 重试次数
     std::chrono::milliseconds result_flush_interval = std::chrono::milliseconds(5000);
     std::string output_write_mode = "stream";   // stream 或 final
@@ -200,11 +200,15 @@ private:
 // 从文件加载域名列表
 std::vector<std::string> load_domains(const std::string& filename, size_t offset = 0);
 
+// 以流式方式处理域名列表，回调返回 false 时提前终止
+size_t stream_domains(
+    const std::string& path,
+    size_t offset,
+    const std::function<bool(const std::string&)>& handle_target
+);
+
 // 检查是否是有效的 IP 地址
 bool is_valid_ip_address(const std::string& s);
-
-// 从文件加载目标列表
-std::vector<ScanTarget> load_targets(const std::string& filename);
 
 // 保存报告到文件
 void save_report(const ScanReport& report, const std::string& filename);

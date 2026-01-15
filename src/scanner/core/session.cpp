@@ -1,6 +1,7 @@
 #include "scanner/core/session.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
+#include "scanner/network/latency_manager.h"
 #include <atomic>
 #include <algorithm>
 
@@ -126,8 +127,14 @@ bool ScanSession::start_one_probe(
         return false;
     }
 
+    // 若配置超时为 0，启用动态超时
+    Timeout effective_timeout = timeout;
+    if (effective_timeout.count() == 0) {
+        effective_timeout = LatencyManager::instance().get_timeout(target_.ip);
+    }
+
     // 提交任务到扫描线程池，实际 IO 在 exec 所属 io_context
-    scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout]() {
+    scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
         // 优先使用域名作为 target，如果没有域名则使用 IP
         const std::string& target = target_.domain.empty() ? target_.ip : target_.domain;
         
@@ -243,6 +250,14 @@ std::shared_ptr<TaskQueue<ProtocolResult>> ScanSession::result_queue(const std::
 
 void ScanSession::push_result(ProtocolResult&& r) {
     mark_task_completed();
+    
+    // 动态超时统计：如果有响应且成功
+    if (r.accessible && r.attrs.response_time_ms > 0) {
+        LatencyManager::instance().update(
+            target_.ip, 
+            std::chrono::milliseconds(static_cast<int64_t>(r.attrs.response_time_ms))
+        );
+    }
     
     // 如果设置了 only_success，过滤失败结果
     if (only_success_ && !r.accessible) {
