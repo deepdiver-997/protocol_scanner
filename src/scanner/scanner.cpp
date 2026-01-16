@@ -92,6 +92,10 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
 void Scanner::start(const std::string& source_path) {
     stop_ = false;
     input_done_ = false;
+    input_source_path_ = source_path;
+    
+    // 初始化进度管理器
+    progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
     
     // 启动计时器
     {
@@ -105,9 +109,31 @@ void Scanner::start(const std::string& source_path) {
     input_thread_ = std::thread([this, source_path]() {
         try {
             size_t loaded_count = 0;
+            
+            // 加载断点信息
+            CheckpointInfo checkpoint;
+            bool has_checkpoint = progress_manager_->has_valid_checkpoint() && 
+                                  progress_manager_->load_checkpoint(checkpoint);
+            
+            std::string skip_until_ip = has_checkpoint ? checkpoint.last_ip : "";
+            bool skip_mode = !skip_until_ip.empty();
+            size_t skipped_count = 0;
 
-            auto enqueue_target = [this, &loaded_count](const std::string& target_str) -> bool {
+            auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str) -> bool {
                 if (stop_) return false;
+
+                // 跳过已处理的 IP
+                if (skip_mode) {
+                    if (is_valid_ip_address(target_str)) {
+                        if (target_str == skip_until_ip) {
+                            skip_mode = false;  // 找到了断点，从下一个开始处理
+                            LOG_CORE_INFO("Resumed from checkpoint: {}", skip_until_ip);
+                        } else {
+                            skipped_count++;
+                            return true;  // 跳过
+                        }
+                    }
+                }
 
                 std::unique_lock<std::mutex> lock(targets_mutex_);
                 targets_cv_.wait(lock, [this]() {
@@ -130,11 +156,18 @@ void Scanner::start(const std::string& source_path) {
             };
 
             stream_domains(source_path, 0, enqueue_target);
-
-            total_targets_ = loaded_count;
+            
+            if (has_checkpoint) {
+                LOG_CORE_INFO("Skipped {} already-processed targets", skipped_count);
+                total_targets_ = loaded_count + checkpoint.processed_count;
+                successful_ips_ = checkpoint.successful_count;
+            } else {
+                total_targets_ = loaded_count;
+            }
 
             input_done_ = true;
-            LOG_CORE_INFO("Input parsing completed: {} targets loaded", loaded_count);
+            LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {})", 
+                         loaded_count, total_targets_.load());
         } catch (const std::exception& e) {
             LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
             input_done_ = true;
@@ -150,6 +183,7 @@ void Scanner::start(const std::string& source_path) {
 void Scanner::result_handler_thread() {
     const bool stream_mode = (config_.output_write_mode == "stream");
     auto last_flush = std::chrono::steady_clock::now();
+    std::string last_successful_ip;  // 用于记录最后一个成功的 IP
     
     while (!stop_ || !result_queue_.empty()) {
         auto now = std::chrono::steady_clock::now();
@@ -194,6 +228,10 @@ void Scanner::result_handler_thread() {
             if (has_success) {
                 successful_ips_++;
             }
+            
+            // 记录最后的 IP（用于断点）
+            last_successful_ip = r.target.ip;
+            checkpoint_counter_++;
         }
 
         // 流式写入文件（在移动 batch 之前）
@@ -237,12 +275,23 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        // {
-        //     std::lock_guard<std::mutex> lock(reports_mutex_);
-        //     completed_reports_.insert(completed_reports_.end(),
-        //                             std::make_move_iterator(batch.begin()),
-        //                             std::make_move_iterator(batch.end()));
-        // }
+        // 周期性保存进度（checkpoint）
+        if (progress_manager_ && checkpoint_counter_ >= config_.checkpoint_interval) {
+            CheckpointInfo checkpoint;
+            checkpoint.last_ip = last_successful_ip;
+            checkpoint.processed_count = total_targets_.load();
+            checkpoint.successful_count = successful_ips_.load();
+            
+            auto now_time = std::chrono::system_clock::now();
+            auto time_t = std::chrono::system_clock::to_time_t(now_time);
+            std::stringstream ss;
+            ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
+            checkpoint.timestamp = ss.str();
+            
+            progress_manager_->save_checkpoint(checkpoint);
+            checkpoint_counter_ = 0;  // 重置计数器
+        }
+
         reports_cv_.notify_one();
 
         last_flush = std::chrono::steady_clock::now();
@@ -272,6 +321,11 @@ void Scanner::result_handler_thread() {
         report_ofs_ << "============================================\n";
         report_ofs_.flush();
         report_ofs_.close();
+        
+        // 扫描完成，清除进度文件
+        if (progress_manager_) {
+            progress_manager_->clear_checkpoint();
+        }
     }
     
     LOG_CORE_INFO("Result handler thread finished");
@@ -280,10 +334,23 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
 
+    // 计算安全的任务配额：
+    // - 每个 session 有 N 个协议探测（如 3 个：SSH, FTP, TELNET）
+    // - 每个探测需要 1 个 socket (FD)
+    // - 所以 max_work_count 个 session 最多需要 max_work_count * num_protocols 个 FD
+    // - 我们需要确保 quota 不会一次性创建太多连接
     auto estimate_quota = [this]() -> int {
-        int base = std::max(1, config_.thread_count);
-        int quota = base * 2;
-        quota = std::min(quota, config_.batch_size);
+        // 每轮循环最多启动的任务数
+        // 保守一点：最多启动 max_work_count / 2 个新任务
+        int max_concurrent = static_cast<int>(config_.max_work_count);
+        if (max_concurrent <= 0) max_concurrent = 1000; // 默认上限
+        
+        // 留出余量给已经在进行中的连接
+        int active_sessions = static_cast<int>(sessions_.size());
+        int available_slots = max_concurrent - active_sessions;
+        
+        // 每轮最多启动 batch_size 个新任务，但不能超过可用槽位
+        int quota = std::min(config_.batch_size, std::max(1, available_slots));
         return quota;
     };
 
@@ -321,6 +388,11 @@ void Scanner::scan_loop() {
 
         // 创建新 session 并分配任务
         while (quota > 0) {
+            // 检查最大并发会话数（如果有配置）
+            if (config_.max_work_count > 0 && sessions_.size() >= config_.max_work_count) {
+                break;
+            }
+
             ScanTarget t;
             {
                 std::lock_guard<std::mutex> lock(targets_mutex_);
@@ -463,6 +535,11 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
 
         // 创建新 session 并分配任务
         while (quota > 0) {
+            // 检查最大并发会话数（如果有配置）
+            if (config_.max_work_count > 0 && sessions_.size() >= config_.max_work_count) {
+                break;
+            }
+
             ScanTarget t;
             {
                 std::lock_guard<std::mutex> lock(targets_mutex_);

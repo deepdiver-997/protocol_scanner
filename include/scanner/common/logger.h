@@ -25,7 +25,8 @@ enum class LogModule {
 class Logger {
 public:
     static Logger& get_instance() { static Logger inst; return inst; }
-    void init(const std::string& = "", size_t = 0, size_t = 0, int = 0) {}
+    void init(const std::string& = "", size_t = 0, size_t = 0, int = 0,
+              bool = true, bool = true) {}
     void set_level(int) {}
     void set_module_level(LogModule, int) {}
     void flush() {}
@@ -126,6 +127,7 @@ namespace spdlog { namespace level {
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/stdout_color_sinks.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <spdlog/sinks/null_sink.h>
 #include <memory>
 #include <string>
 #include <vector>
@@ -163,28 +165,40 @@ public:
     void init(const std::string& log_file = "logs/scanner.log",
               size_t max_file_size = 1024 * 1024 * 5,  // 5MB
               size_t max_files = 3,
-              spdlog::level::level_enum level = spdlog::level::info) {
+              spdlog::level::level_enum level = spdlog::level::info,
+              bool enable_console = true,
+              bool enable_file = true) {
         if (m_initialized) {
             return;
         }
 
         try {
-            // 确保日志目录存在
-            std::filesystem::path log_dir(log_file);
-            if (!std::filesystem::exists(log_dir.parent_path())) {
-                std::filesystem::create_directories(log_dir.parent_path());
+            std::vector<spdlog::sink_ptr> sinks;
+
+            if (enable_console) {
+                auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
+                console_sink->set_level(level);
+                console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] [%n] %v");
+                sinks.push_back(console_sink);
             }
-            // 创建多 sink：终端 + 文件
-            auto console_sink = std::make_shared<spdlog::sinks::stdout_color_sink_mt>();
-            console_sink->set_level(level);
-            console_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%^%l%$] [%t] [%n] %v");
 
-            auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
-                log_file, max_file_size, max_files);
-            file_sink->set_level(level);
-            file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] [%n] %v");
+            if (enable_file) {
+                std::filesystem::path log_dir(log_file);
+                if (!std::filesystem::exists(log_dir.parent_path())) {
+                    std::filesystem::create_directories(log_dir.parent_path());
+                }
+                auto file_sink = std::make_shared<spdlog::sinks::rotating_file_sink_mt>(
+                    log_file, max_file_size, max_files);
+                file_sink->set_level(level);
+                file_sink->set_pattern("[%Y-%m-%d %H:%M:%S.%e] [%l] [%t] [%n] %v");
+                sinks.push_back(file_sink);
+            }
 
-            std::vector<spdlog::sink_ptr> sinks {console_sink, file_sink};
+            if (sinks.empty()) {
+                auto null_sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+                null_sink->set_level(level);
+                sinks.push_back(null_sink);
+            }
 
             // 创建各模块 logger
             m_loggers[static_cast<size_t>(LogModule::CORE)] =

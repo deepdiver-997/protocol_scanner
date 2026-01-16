@@ -54,6 +54,6 @@ tests/output/*.txt
 tests/output/*.csv
 !tests/output/.gitkeep
 data/
-tests/
+tests/output/**
 *ip*
 !get_country_ips.sh

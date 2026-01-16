@@ -144,7 +144,14 @@ bool ScanSession::start_one_probe(
             port,
             timeout,
             exec,
-            [this](ProtocolResult&& r) {
+            [this, proto_name = proto_ptr->name()](ProtocolResult&& r) {
+                if (!r.accessible && !r.error.empty()) {
+                     // 临时增加调试日志，采样打印错误
+                     static int err_log_count = 0;
+                     if (err_log_count++ < 10) {
+                         LOG_CORE_WARN("Probe failed for {} {}: {}", target_.ip, proto_name, r.error);
+                     }
+                }
                 push_result(std::move(r));
                 if (ready_to_release()) {
                     notify_complete();

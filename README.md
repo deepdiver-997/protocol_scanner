@@ -304,15 +304,17 @@ Edit `config/scanner_config.json`:
 ```json
 {
   "scanner": {
-    "io_thread_count": 24,          // IO 线程（网络 I/O）
-    "cpu_thread_count": 4,          // CPU 线程（轻量封装）
+    "io_thread_count": 12,          // IO 线程（网络 I/O）推荐 8-16
+    "cpu_thread_count": 4,          // CPU 线程（轻量封装）推荐 4-8
     "thread_count": 8,              // 废弃：保持兼容
-    "batch_size": 100,              // 单批并发
+    "batch_size": 2000,             // 单批并发，推荐 1000-3000
     "dns_timeout_ms": 1000,
-    "probe_timeout_ms": 2000,
+    "probe_timeout_ms": 5000,        // 推荐 5000 (5s)，平衡速度与准确性
+                                     // 0=动态超时(仅适合高质量网络)
     "retry_count": 1,
-    "only_success": true,           // 仅输出成功结果
-    "max_work_count": 100           // 预留字段（批次最大工作量）
+    "only_success": true,            // 仅输出成功结果
+    "max_work_count": 5000           // 推荐 3000-5000，⚠️ 不要设为 0
+                                     // 系统会自动根据 FD 上限调整此值
   },
   "protocols": {
     "SMTP": {
@@ -380,27 +382,88 @@ Edit `config/scanner_config.json`:
 
 ### Timeout Settings
 
-The default `probe_timeout_ms: 5000` is reasonable for most scenarios:
+**Recommended: `probe_timeout_ms: 5000` (5 seconds)**
 
-| Timeout | Pros | Cons |
-|---------|-------|-------|
-| 3000ms  | Fast scan | May miss slow servers |
-| 5000ms  | **Balanced** | None |
-| 10000ms | More reliable | Slow on failures |
+Based on extensive benchmarks, 5s timeout provides the best balance:
+
+| Timeout | Speed (targets/s) | Accuracy | Use Case |
+|---------|------------------|----------|----------|
+| 2-3s | ⚡ Fast (800+) | ⚠️ Low (misses slow servers) | Quick recon only |
+| **5s** | ✅ **Fast (700-900)** | ✅ **High** | **Recommended for most scenarios** |
+| 10s | 🐌 Slow (450-500) | ✅✅ Highest | High-accuracy audits, poor networks |
+| 0 (dynamic) | ⚡⚡ Very Fast (800+) | ⚠️⚠️ Very Low* | Good networks only* |
+
+*Dynamic timeout (0) is **2x faster but detects only ~3-5% of targets** compared to fixed 5s timeout. Only use in excellent network conditions.
 
 ### Thread Count
 
 - **Scan Pool**: 4-8 threads (CPU-bound task submission)
 - **IO Pool**: 4-8 io_context instances (parallel network ops)
 
-Total concurrent probes = `scan_pool_size × 2` (quota heuristic)
+### Concurrency & Batch Size
 
-### Batch Size
+Concurrency is controlled by the following parameters:
 
-Controls max in-flight probes:
-- Small (10-50): Low memory, less parallelism
-- Medium (100-500): **Balanced**
-- Large (1000+): High parallelism, more memory usage
+- **max_work_count**: The HARD limit on the number of active, concurrent targets being scanned.
+  - **Recommended Values** (based on 65k IP benchmark):
+    - Small scans (<10k IPs): 1000-2000
+    - Medium scans (10k-100k IPs): **3000-5000** ✅ **Optimal**
+    - Large scans (>100k IPs): 5000-8000
+  - **⚠️ DO NOT set to 0**: This auto-sets to 50,000 which is TOO HIGH and causes:
+    - Resource contention (slower performance)
+    - Port exhaustion (TIME_WAIT)
+    - Lower accuracy due to packet loss
+    - Benchmark: 0 → 119s vs 5000 → 71s (same input)
+  - **Formula**: `max_work_count ≤ (FD_limit - 150) / num_enabled_protocols`
+    - Each session uses 1 FD per enabled protocol
+    - Reserve ~150 FDs for system/libs/logging
+    - Example: FD=65535, 3 protocols → max ~21,795 sessions
+  - **Auto-Adjustment**: If your configured value exceeds system limits, it will be auto-capped with a warning.
+  
+- **batch_size**: Controls how many new tasks are dispatched to the thread pool in one loop iteration.
+  - Small (100-500): Conservative
+  - Medium (1000-2000): **Balanced (Recommended)**
+  - Large (5000+): Aggressive, ensure adequate `max_work_count`
+
+**Tip**: If you see low CPU/Network usage, first increase `max_work_count`. Simply increasing thread count often helps less than increasing the concurrency window.
+
+### Protocol Selection Impact
+
+The number of enabled protocols directly affects scan speed:
+
+| Protocols Enabled | Speed (65k IPs) | Detections | Notes |
+|-------------------|----------------|------------|-------|
+| 1 protocol (FTP) | 81-119s | 360-1599 | Fastest, limited coverage |
+| 2 protocols (FTP+TELNET) | **71s** ✅ | 1599 | **Best speed/coverage balance** |
+| 3 protocols (FTP+SSH+TELNET) | 89s | 1756 | Most comprehensive |
+
+**Recommendations**:
+- **Speed priority**: Enable only protocols you care about (e.g., just FTP or SSH)
+- **Coverage priority**: Enable all relevant protocols, accept slower speed
+- **Balanced**: Start with 2-3 most common protocols, add more if needed
+
+*Benchmark conditions: probe_timeout=5s, max_work_count=5000, 65536 IPs*
+
+### Dynamic Timeout (Adaptive RTT)
+
+Set `probe_timeout_ms: 0` to enable dynamic timeout based on RTT (Round-Trip Time):
+- Uses EWMA (Exponential Weighted Moving Average) per /24 subnet
+- Automatically adapts: fast networks get shorter timeouts, slow networks get longer
+- Default range: 800ms - 4000ms (can be adjusted in `latency_manager.h`)
+- **Pros**: ⚡ Fast (800+ targets/sec, ~30% faster than 5s)
+- **Cons**: ⚠️ **VERY LOW accuracy** (~3-5% detection rate vs 5s timeout)
+  - Benchmark: Dynamic=56 detected vs Fixed 5s=1756 detected (same input)
+
+**When to use**:
+- ✅ Local network / data center scans (low latency, high quality)
+- ✅ Quick reconnaissance where speed >> accuracy
+- ❌ **NOT recommended for Internet scans** (too many false negatives)
+- ❌ Production audits or compliance scans (use fixed 5-10s)
+
+**Recommendation**: Start with fixed 5s timeout. Only switch to dynamic if:
+1. Network quality is excellent (LAN/DC)
+2. You've verified detection rates are acceptable for your use case
+3. Speed is critical and you can tolerate missing 95% of targets
 
 ### DNS Optimization
 
@@ -617,6 +680,67 @@ sudo apt-get install cmake \
     libc-ares-dev \
     libspdlog-dev
 ```
+
+## System Requirements & Limits
+
+To run this scanner at high concurrency (e.g., >1000 targets), you should be aware of OS limits.
+
+### Automatic System Limit Detection
+
+**The scanner now automatically detects and adjusts to system limits:**
+
+- **FD Auto-Raising**: On startup, the scanner attempts to raise the soft FD limit to the hard limit, and if possible, up to 65535.
+- **Auto-Capping max_work_count**: If configured `max_work_count` exceeds available file descriptors, it will be automatically reduced with a warning in logs.
+- **Smart Recommendations**: The scanner calculates usable FDs (total - reserved for system/libs) and suggests safe `max_work_count` values.
+
+**Logs will show:**
+```
+[info] Successfully raised FD limit from 256 to 65535
+[info] System FD Limit: 65535 (Usable: 65385)
+[info] Auto-setting max_work_count to 5000 based on system FD limit
+```
+
+### macOS Limits (Manual Tuning)
+
+While auto-detection handles most cases, you may still need manual tuning for extreme concurrency:
+
+1. **File Descriptors (FD)**:
+   The scanner will try to raise this automatically, but you can pre-set it:
+   ```bash
+   # Check current limit
+   ulimit -n
+   # Increase to max (only valid for current shell)
+   ulimit -n 65535
+   # Note: restart current shell or run command in new terminal after setting this
+   ```
+
+2. **Ephemeral Ports**:
+   By default, macOS only allows ports 49152-65535 (~16k ports) for outgoing connections.
+   ```bash
+   # Check range
+   sysctl net.inet.ip.portrange.first net.inet.ip.portrange.last
+   # approx 16383 ports available
+   ```
+   If you have >16k in-flight connections (or in TIME_WAIT), you will run out of ports.
+   **Solution**: Increase range (requires sudo):
+   ```bash
+   sudo sysctl -w net.inet.ip.portrange.first=10000
+   ```
+
+3. **TIME_WAIT State (MSL)**:
+   Closed connections stay in TIME_WAIT for 2*MSL (default 15000ms * 2 = 30s).
+   High concurrency scans generate tons of TIME_WAIT sockets, exhausting ports.
+   ```bash
+   # Check MSL (default 15000 = 15s)
+   sysctl net.inet.tcp.msl
+   # Reduce to 1s to recycle ports faster (risky but effective for scanning)
+   sudo sysctl -w net.inet.tcp.msl=1000
+   ```
+
+### Hardware Network Limits
+
+- **Router NAT Table**: Home routers often crash or drop packets if NAT table exceeds ~2000-4000 concurrent sessions.
+- **ISP Limits**: Some ISPs block high-rate SYN packets (scan detection).
 
 ## Troubleshooting
 

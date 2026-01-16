@@ -5,6 +5,7 @@
 #include "scanner/core/scanner.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
+#include <spdlog/sinks/null_sink.h>
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -14,11 +15,91 @@
 #include <sstream>
 #include <signal.h>
 
+#include <sys/resource.h> // for getrlimit
+#include <unistd.h>      // for sysconf
+#include <cstring>
+#include <cerrno>
+
 namespace po = boost::program_options;
 namespace scanner {
 
 using namespace std;
 using namespace std::chrono;
+
+// =====================
+// 系统资源检查
+// =====================
+
+void check_system_limits(ScannerConfig& config) {
+    // 1. 检查文件描述符限制 (RLIMIT_NOFILE)
+    struct rlimit rl;
+    if (getrlimit(RLIMIT_NOFILE, &rl) == 0) {
+        // 尝试提升限制到最大 (hard limit)
+        if (rl.rlim_cur < rl.rlim_max) {
+             struct rlimit new_rl = rl;
+             new_rl.rlim_cur = rl.rlim_max; // 尝试提升到 hard limit
+             if (setrlimit(RLIMIT_NOFILE, &new_rl) == 0) {
+                 LOG_CORE_INFO("Successfully raised FD limit from {} to {}", rl.rlim_cur, new_rl.rlim_cur);
+                 rl = new_rl; // 更新当前状态
+             } else {
+                 LOG_CORE_WARN("Failed to raise FD limit from {} to {}: {}", rl.rlim_cur, rl.rlim_max, strerror(errno));
+             }
+        }
+        
+        // 如果仍然很低 (MacOS default is typically 256 for soft, but hard might be high)
+        // 尝试强制设置为一个较大的合理值 (e.g. 65535)，即使超过当前的 hard limit (这通常需要 root，但值得一试)
+        if (rl.rlim_cur < 65535) {
+             struct rlimit new_rl = rl;
+             new_rl.rlim_cur = 65535;
+             if (new_rl.rlim_max < 65535) new_rl.rlim_max = 65535;
+             if (setrlimit(RLIMIT_NOFILE, &new_rl) == 0) {
+                  LOG_CORE_INFO("Forcefully raised FD limit to 65535");
+                  rl = new_rl;
+             }
+        }
+
+        size_t fd_limit = rl.rlim_cur;
+        
+        // 保留给 system、libs、logging 等的文件描述符 (保守预估 150)
+        size_t reserved_fds = 150; 
+        size_t usable_fds = (fd_limit > reserved_fds) ? (fd_limit - reserved_fds) : 0;
+
+        LOG_CORE_INFO("System FD Limit: {} (Usable: {})", fd_limit, usable_fds);
+
+        // 如果用户配置的并发数超过了系统允许的 FD 数量，自动降级
+        if (config.max_work_count == 0 || config.max_work_count > usable_fds) {
+            size_t suggested = std::max(size_t(100), usable_fds); // 至少 100
+            
+            if (config.max_work_count > 0) {
+                LOG_CORE_WARN("Configured max_work_count ({}) exceeds system FD limit ({}). Cap to {}", 
+                              config.max_work_count, fd_limit, suggested);
+            } else {
+                // 如果是 0 (无限制)，则设置为安全上限
+                // 只有当 FD limit 看起来比较小时才打印 INFO，避免 65535 时也刷屏
+                if (fd_limit < 10000) {
+                     LOG_CORE_INFO("Auto-setting max_work_count to {} based on system FD limit ({})", 
+                                   suggested, fd_limit);
+                } else {
+                    // 如果很大，还是设置一个默认上限，防止无限撑爆内存
+                    suggested = std::min((size_t)50000, usable_fds);
+                    LOG_CORE_INFO("Auto-setting max_work_count to {} (Safe limit)", suggested);
+                }
+            }
+            config.max_work_count = suggested;
+        } else {
+            // 如果用户配置合理，或者 FD 限制很大 (>10k)，则无需警告
+        }
+        
+        if (fd_limit < 1024) {
+            LOG_CORE_WARN("System file descriptor limit is VERY LOW ({}). Performance will be poor. Run 'ulimit -n 65535' to fix.", fd_limit);
+        }
+    }
+
+    // 2. 检查内存 (暂不强制限制，仅做建议)
+    // 假设每个 active session 占用 ~50KB (Conservative: Socket + Buffers + Structs)
+    // 1GB RAM ~= 20,000 sessions
+    // 如果想要更激进，可以计算 sysconf(_SC_PHYS_PAGES) * sysconf(_SC_PAGE_SIZE)
+}
 
 // =====================
 // 全局变量
@@ -297,6 +378,10 @@ int main(int argc, char* argv[]) {
             config_file_to_load = default_config_path;
         }
 
+        // 在读取配置前，将默认 logger 指向空 sink，避免未初始化阶段的日志刷到终端
+        auto bootstrap_sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("bootstrap", bootstrap_sink));
+
         ScannerConfig config = load_config(config_file_to_load);
 
         // 覆盖配置（命令行参数优先）
@@ -381,7 +466,25 @@ int main(int argc, char* argv[]) {
         }
 
         // 设置日志级别
-        scanner::Logger::get_instance().init();
+        // 获取配置中的日志路径，如果未指定则使用 defaults
+        std::string log_path = config.logging_file_path;
+        if (log_path.empty()) log_path = "logs/scanner.log";
+
+        // 如果未显式启用任何 sink，回落到控制台输出，避免无日志的情况
+        bool console_enabled = config.logging_console_enabled;
+        bool file_enabled = config.logging_file_enabled;
+        if (!console_enabled && !file_enabled) {
+            console_enabled = true;
+        }
+
+        scanner::Logger::get_instance().init(
+            log_path,
+            1024 * 1024 * 5,  // 5MB
+            3,
+            spdlog::level::info,
+            console_enabled,
+            file_enabled);
+        
         if (vm.count("verbose")) {
             scanner::Logger::get_instance().set_level(spdlog::level::debug);
         } else if (vm.count("quiet")) {
@@ -426,6 +529,9 @@ int main(int argc, char* argv[]) {
         }
 
         if (vm.count("scan")) {
+            // 检查系统限制并自动调整配置
+            check_system_limits(config);
+            
             // 异步扫描模式
             LOG_CORE_INFO("Starting scan with input source: {}", domains_file);
             Scanner scanner(config);

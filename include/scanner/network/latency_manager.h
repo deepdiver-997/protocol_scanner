@@ -38,8 +38,8 @@ struct SubnetLatency {
         srtt_us.store(new_srtt, std::memory_order_relaxed);
     }
 
-    // 获取建议的超时时间
-    std::chrono::milliseconds get_suggested_timeout(uint32_t min_timeout_ms = 100, uint32_t max_timeout_ms = 3000) const {
+    // 获取建议的超时时间，带上下限钳制
+    std::chrono::milliseconds get_suggested_timeout(uint32_t min_timeout_ms, uint32_t max_timeout_ms) const {
         uint32_t rtt = srtt_us.load(std::memory_order_relaxed);
         uint32_t var = rttvar_us.load(std::memory_order_relaxed);
         
@@ -55,6 +55,9 @@ struct SubnetLatency {
 
 class LatencyManager {
 public:
+    static constexpr uint32_t kMinTimeoutMs = 800;
+    static constexpr uint32_t kMaxTimeoutMs = 4000;
+
     static LatencyManager& instance() {
         static LatencyManager instance;
         return instance;
@@ -70,10 +73,10 @@ public:
 
     // 获取建议超时时间
     std::chrono::milliseconds get_timeout(const std::string& ip_str) {
-        if (ip_str.empty()) return std::chrono::milliseconds(2000); // 默认兜底
+        if (ip_str.empty()) return std::chrono::milliseconds(kMinTimeoutMs); // 默认兜底
         auto subnet = get_subnet_key(ip_str);
-        if (subnet.empty()) return std::chrono::milliseconds(2000);
-        return get_subnet_stats(subnet)->get_suggested_timeout();
+        if (subnet.empty()) return std::chrono::milliseconds(kMinTimeoutMs);
+        return get_subnet_stats(subnet)->get_suggested_timeout(kMinTimeoutMs, kMaxTimeoutMs);
     }
 
 private:

@@ -3,12 +3,12 @@
     "io_thread_count": 12,
     "cpu_thread_count": 4,
     "thread_count": 8,
-    "batch_size": 100,
+    "batch_size": 2000,
     "dns_timeout_ms": 1000,
-    "probe_timeout_ms": 0,
+    "probe_timeout_ms": 5000,
     "retry_count": 1,
     "only_success": true,
-    "max_work_count": 100
+    "max_work_count": 5000
   },
   "protocols": {
     "SMTP": {
@@ -64,8 +64,8 @@
   "logging": {
     "level": "INFO",
     "console_enabled": false,
-    "file_enabled": false,
-    "file_path": "./scanner.log"
+    "file_enabled": true,
+    "file_path": "./logs/scanner.log"
   },
   "vendor": {
     "enabled": true,

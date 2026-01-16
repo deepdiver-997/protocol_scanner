@@ -127,6 +127,7 @@ set(SCANNER_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/common/thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/io_thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/session.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/core/progress_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/utils.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/scanner.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/vendor/vendor_detector.cpp

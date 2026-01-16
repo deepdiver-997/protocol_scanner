@@ -4,6 +4,7 @@
 #include "scanner/common/thread_pool.h"
 #include "scanner/common/io_thread_pool.h"
 #include "scanner/core/session.h"
+#include "scanner/core/progress_manager.h"
 #include "scanner/vendor/vendor_detector.h"
 #include "scanner/output/result_handler.h"
 #include <vector>
@@ -52,6 +53,9 @@ struct ScannerConfig {
     std::string dns_resolver_type = "cares";  // cares 或 dig
     int dns_max_mx_records = 16;
     std::chrono::milliseconds dns_config_timeout = std::chrono::milliseconds(5000);
+
+    // Checkpoint 配置
+    size_t checkpoint_interval = 10000;  // 每处理这么多条结果就保存一次进度
 
     // Output 配置
     std::vector<std::string> output_formats;  // ["text", "csv", "json"]
@@ -191,6 +195,11 @@ private:
     std::chrono::steady_clock::time_point start_time_;
     std::chrono::steady_clock::time_point end_time_;
     std::atomic<bool> timing_started_{false};
+    
+    // 进度管理
+    std::unique_ptr<ProgressManager> progress_manager_;
+    std::string input_source_path_;
+    size_t checkpoint_counter_ = 0;  // 自上次 checkpoint 以来处理的结果数
 };
 
 // =====================
