@@ -5,7 +5,9 @@
 #include "scanner/core/scanner.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
+#ifndef SCANNER_DISABLE_LOGGING
 #include <spdlog/sinks/null_sink.h>
+#endif
 #include <boost/program_options.hpp>
 #include <nlohmann/json.hpp>
 #include <iostream>
@@ -378,9 +380,16 @@ int main(int argc, char* argv[]) {
             config_file_to_load = default_config_path;
         }
 
-        // 在读取配置前，将默认 logger 指向空 sink，避免未初始化阶段的日志刷到终端
+        // 在读取配置前将默认 logger 静音（仅在启用日志时）
+        #ifndef SCANNER_DISABLE_LOGGING
+        // 防止预初始化日志刷到终端（例如 load_config 中日志）
         auto bootstrap_sink = std::make_shared<spdlog::sinks::null_sink_mt>();
+        #if SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_DEBUG || SPDLOG_ACTIVE_LEVEL <= SPDLOG_LEVEL_INFO
         spdlog::set_default_logger(std::make_shared<spdlog::logger>("bootstrap", bootstrap_sink));
+        #else
+        spdlog::set_default_logger(std::make_shared<spdlog::logger>("bootstrap", bootstrap_sink));
+        #endif
+        #endif
 
         ScannerConfig config = load_config(config_file_to_load);
 

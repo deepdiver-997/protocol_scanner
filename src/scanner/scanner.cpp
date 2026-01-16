@@ -161,8 +161,10 @@ void Scanner::start(const std::string& source_path) {
                 LOG_CORE_INFO("Skipped {} already-processed targets", skipped_count);
                 total_targets_ = loaded_count + checkpoint.processed_count;
                 successful_ips_ = checkpoint.successful_count;
+                processed_count_ = checkpoint.processed_count;
             } else {
                 total_targets_ = loaded_count;
+                processed_count_ = 0;
             }
 
             input_done_ = true;
@@ -228,8 +230,9 @@ void Scanner::result_handler_thread() {
             if (has_success) {
                 successful_ips_++;
             }
-            
-            // 记录最后的 IP（用于断点）
+
+            processed_count_++;
+            // 记录最后处理的 IP（不论成功与否，用于断点）
             last_successful_ip = r.target.ip;
             checkpoint_counter_++;
         }
@@ -279,7 +282,7 @@ void Scanner::result_handler_thread() {
         if (progress_manager_ && checkpoint_counter_ >= config_.checkpoint_interval) {
             CheckpointInfo checkpoint;
             checkpoint.last_ip = last_successful_ip;
-            checkpoint.processed_count = total_targets_.load();
+            checkpoint.processed_count = processed_count_.load();
             checkpoint.successful_count = successful_ips_.load();
             
             auto now_time = std::chrono::system_clock::now();

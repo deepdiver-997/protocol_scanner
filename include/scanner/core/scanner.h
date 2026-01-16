@@ -200,6 +200,7 @@ private:
     std::unique_ptr<ProgressManager> progress_manager_;
     std::string input_source_path_;
     size_t checkpoint_counter_ = 0;  // 自上次 checkpoint 以来处理的结果数
+    std::atomic<size_t> processed_count_{0};  // 已处理（完成扫描）的目标数
 };
 
 // =====================

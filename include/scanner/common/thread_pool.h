@@ -6,6 +6,7 @@
 #include <condition_variable>
 #include <future>
 #include <thread>
+#include <functional>
 #include <atomic>
 #include <type_traits>
 
