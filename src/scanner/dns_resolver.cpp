@@ -427,24 +427,30 @@ bool CAresResolver::query_a_record(
     if (!channel_ && !init_channel()) return false;
 
     std::atomic<bool> done{false};
-    
-    // 使用 shared_ptr 确保回调时内存仍然有效
-    auto ctx = std::make_shared<std::pair<std::string, int>>();
-    ctx->second = ARES_EDESTRUCTION;
 
-    auto* ctx_ptr = new std::shared_ptr<std::pair<std::string, int>>(ctx);
-    
+    // 上下文：保存结果与完成标记
+    struct AddrinfoCtx {
+        std::shared_ptr<std::pair<std::string, int>> data;
+        std::atomic<bool>* done;
+    };
+
+    // 使用 shared_ptr 确保回调时内存仍然有效
+    auto data = std::make_shared<std::pair<std::string, int>>();
+    data->second = ARES_EDESTRUCTION;
+
+    auto* ctx_ptr = new AddrinfoCtx{data, &done};
+
     // Replace deprecated ares_gethostbyname with ares_getaddrinfo
     struct ares_addrinfo_hints hints = {};
     hints.ai_family = AF_INET; // IPv4
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = ARES_AI_CANONNAME;
-    
-    ares_getaddrinfo(channel_, domain.c_str(), nullptr, &hints, [](void* arg, int status, int timeouts, struct ares_addrinfo* result) {
-        auto ctx = static_cast<std::shared_ptr<std::pair<std::string, int>>*>(arg);
-        if (!ctx) return;
-        
-        (*ctx)->second = status;
+
+    ares_getaddrinfo(channel_, domain.c_str(), nullptr, &hints, [](void* arg, int status, int /*timeouts*/, struct ares_addrinfo* result) {
+        auto* ctx = static_cast<AddrinfoCtx*>(arg);
+        if (!ctx || !ctx->data) return;
+
+        ctx->data->second = status;
         if (status == ARES_SUCCESS && result) {
             // Traverse the list
             for (auto* node = result->nodes; node != nullptr; node = node->ai_next) {
@@ -453,13 +459,15 @@ bool CAresResolver::query_a_record(
                     auto* addr = reinterpret_cast<struct sockaddr_in*>(node->ai_addr);
                     const char* res = inet_ntop(AF_INET, &(addr->sin_addr), buf, sizeof(buf));
                     if (res) {
-                        (*ctx)->first = buf;
+                        ctx->data->first = buf;
                         break; // Just get the first one
                     }
                 }
             }
             ares_freeaddrinfo(result);
         }
+        // 标记完成
+        if (ctx->done) ctx->done->store(true);
         delete ctx;
     }, ctx_ptr);
 
@@ -472,12 +480,12 @@ bool CAresResolver::query_a_record(
         return false;
     }
 
-    if (ctx->second != ARES_SUCCESS) {
-        LOG_DNS_WARN("A record query failed for {}: {}", domain, ares_strerror(ctx->second));
+    if (data->second != ARES_SUCCESS) {
+        LOG_DNS_WARN("A record query failed for {}: {}", domain, ares_strerror(data->second));
         return false;
     }
 
-    ip = std::move(ctx->first);
+    ip = std::move(data->first);
     return !ip.empty();
 }
 
@@ -494,58 +502,51 @@ bool CAresResolver::query_mx_records(
 
     records.clear();
     std::atomic<bool> done{false};
-    
-    // 使用 shared_ptr 确保回调时内存仍然有效
-    auto ctx = std::make_shared<std::pair<std::vector<DnsRecord>, int>>();
-    ctx->second = ARES_EDESTRUCTION;
+
+    // 上下文：保存结果与完成标记（旧回调，返回原始报文）
+    struct MxCtx {
+        std::shared_ptr<std::pair<std::vector<DnsRecord>, int>> data;
+        std::atomic<bool>* done;
+    };
+
+    auto data = std::make_shared<std::pair<std::vector<DnsRecord>, int>>();
+    data->second = ARES_EDESTRUCTION;
 
     auto callback = [](void* arg, int status, int /*timeouts*/, unsigned char* abuf, int alen) {
-        auto ctx = static_cast<std::shared_ptr<std::pair<std::vector<DnsRecord>, int>>*>(arg);
-        if (!ctx) return;
-        
-        (*ctx)->second = status;
+        auto* ctx = static_cast<MxCtx*>(arg);
+        if (!ctx || !ctx->data) return;
+
+        ctx->data->second = status;
         if (status == ARES_SUCCESS) {
-            // Replace deprecated ares_parse_mx_reply with ares_dns_parse (if available) 
-            // BUT ares_dns_parse is for raw record parsing from wire.
-            // Actually, the recommended replacement for modern c-ares is ares_parse_mx_reply is fine 
-            // OR use ares_query with callback.
-            // The warning said: Use ares_dns_parse.
-            // Let's stick to parsing the response manually if we want to be perfectly clean, 
-            // or just suppress the warning. 
-            // ares_dns_parse is complex. Let's keep the existing logic and ignore the warning for now 
-            // as it requires significant rewriting of how we handle the raw buffer.
-            
-            // However, we CAN just use the old function and suppress warnings with pragma if compiler supports
-            // or just ignore them.
-            
             struct ares_mx_reply* mx_out = nullptr;
-            // Suppress deprecation warning
+            // 抑制旧解析 API 的弃用告警
             #pragma clang diagnostic push
             #pragma clang diagnostic ignored "-Wdeprecated-declarations"
             int parse = ares_parse_mx_reply(abuf, alen, &mx_out);
             #pragma clang diagnostic pop
-            
             if (parse == ARES_SUCCESS && mx_out) {
                 for (auto* p = mx_out; p != nullptr; p = p->next) {
                     DnsRecord r;
-                    r.name = ""; // not provided by parse
                     r.type = "MX";
                     r.value = p->host ? p->host : "";
-                    r.ttl = 0; 
+                    r.ttl = 0;
                     r.priority = p->priority;
-                    (*ctx)->first.push_back(std::move(r));
+                    ctx->data->first.push_back(std::move(r));
                 }
                 ares_free_data(mx_out);
             }
         }
+        if (ctx->done) ctx->done->store(true);
         delete ctx;
     };
 
-    auto* ctx_ptr = new std::shared_ptr<std::pair<std::vector<DnsRecord>, int>>(ctx);
-    
-    // Replace deprecated ares_query with ares_search (or keep ares_query and suppress)
-    // ares_search is the standard "smart" query (hosts file + dns)
+    auto* ctx_ptr = new MxCtx{data, &done};
+
+    // 抑制 ares_search 的弃用告警，后续待迁移到 dnsrec 查询生成
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
     ares_search(channel_, domain.c_str(), ARES_CLASS_IN, ARES_REC_TYPE_MX, callback, ctx_ptr);
+    #pragma clang diagnostic pop
 
     bool loop_ok = run_event_loop(timeout, done);
     done.store(true);
@@ -555,12 +556,7 @@ bool CAresResolver::query_mx_records(
         return false;
     }
 
-    if (ctx->second != ARES_SUCCESS) {
-        LOG_DNS_WARN("MX query failed for {}: {}", domain, ares_strerror(ctx->second));
-        return false;
-    }
-
-    records = std::move(ctx->first);
+    records = std::move(data->first);
     return !records.empty();
 }
 

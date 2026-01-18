@@ -1,6 +1,7 @@
 #include "scanner/output/result_handler.h"
 #include <nlohmann/json.hpp>
 #include <iostream>
+#include <unordered_map>
 
 namespace scanner {
 
@@ -54,6 +55,47 @@ std::string ResultHandler::to_text(const ScanReport& report) const {
 std::string ResultHandler::to_report(const ScanReport& report) const {
     // 暂时与 TEXT 一致，可按需扩展
     return to_text(report);
+}
+
+// -------------- required_format --------------
+
+std::string ResultHandler::to_required(const ScanReport& report) const {
+    // 静态计数器：为每个唯一 IP 分配序号；单线程调用，无需原子
+    static size_t ip_seq = 0;
+    static std::unordered_map<std::string, size_t> ip_to_seq;
+
+    std::ostringstream oss;
+
+    // 仅保留需要输出的协议（尊重 only_success 筛选）
+    for (const auto& pr : report.protocols) {
+        if (only_success_ && !pr.accessible) continue;
+
+        size_t seq = 0;
+        auto it = ip_to_seq.find(report.target.ip);
+        if (it != ip_to_seq.end()) {
+            seq = it->second;
+        } else {
+            seq = ++ip_seq; // 新 IP 分配下一个序号
+            ip_to_seq.emplace(report.target.ip, seq);
+        }
+
+        oss << seq << ','
+            << report.target.ip << ','
+            << pr.port << ','
+            << pr.attrs.banner
+            << '\n';
+    }
+
+    return oss.str();
+}
+
+std::string ResultHandler::to_required(const std::vector<ScanReport>& reports) const {
+    std::ostringstream oss;
+    for (const auto& rep : reports) {
+        std::string body = to_required(rep);
+        oss << body;
+    }
+    return oss.str();
 }
 
 // -------------- CSV 格式 --------------
@@ -212,6 +254,7 @@ std::string ResultHandler::report_to_string(const ScanReport& report) const {
     switch (format_) {
         case OutputFormat::JSON:   return to_json(report);
         case OutputFormat::CSV:    return to_csv(report);
+        case OutputFormat::REQUIRED: return to_required(report);
         case OutputFormat::REPORT: return to_report(report);
         case OutputFormat::TEXT:
         default:                   return to_text(report);
@@ -222,6 +265,7 @@ std::string ResultHandler::reports_to_string(const std::vector<ScanReport>& repo
     switch (format_) {
         case OutputFormat::JSON:   return to_json(reports);
         case OutputFormat::CSV:    return to_csv(reports);
+        case OutputFormat::REQUIRED: return to_required(reports);
         case OutputFormat::REPORT:
         case OutputFormat::TEXT:
         default: {

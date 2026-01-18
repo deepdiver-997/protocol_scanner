@@ -96,6 +96,18 @@ void Scanner::start(const std::string& source_path) {
     
     // 初始化进度管理器
     progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
+
+    // 初始化结果处理器（用于流式写出自定义格式）
+    result_handler_ = std::make_unique<ResultHandler>();
+    if (result_handler_) {
+        const std::string& fmt = config_.output_format;
+        if (fmt == "json") result_handler_->set_format(OutputFormat::JSON);
+        else if (fmt == "csv") result_handler_->set_format(OutputFormat::CSV);
+        else if (fmt == "report") result_handler_->set_format(OutputFormat::REPORT);
+        else if (fmt == "required_format") result_handler_->set_format(OutputFormat::REQUIRED);
+        else result_handler_->set_format(OutputFormat::TEXT);
+        result_handler_->set_only_success(config_.only_success);
+    }
     
     // 启动计时器
     {
@@ -254,26 +266,7 @@ void Scanner::result_handler_thread() {
             }
 
             if (report_ofs_.is_open()) {
-                for (const auto& r : batch) {
-                    // 跳过没有协议结果的报告（所有协议都失败时）
-                    if (r.protocols.empty()) {
-                        continue;
-                    }
-                    
-                    report_ofs_ << r.target.domain << " (" << r.target.ip << ")\n";
-                    for (const auto& pr : r.protocols) {
-                        report_ofs_ << "  [" << pr.protocol << "] " << pr.host << ":" << pr.port;
-                        if (pr.accessible) {
-                            report_ofs_ << " -> OK\n";
-                            if (!pr.attrs.banner.empty()) {
-                                report_ofs_ << "    banner: " << pr.attrs.banner << "\n";
-                            }
-                        } else {
-                            report_ofs_ << " -> FAIL\n";
-                        }
-                    }
-                    report_ofs_ << "\n";
-                }
+                report_ofs_ << result_handler_->reports_to_string(batch);
                 report_ofs_.flush();
             }
         }
@@ -284,6 +277,8 @@ void Scanner::result_handler_thread() {
             checkpoint.last_ip = last_successful_ip;
             checkpoint.processed_count = processed_count_.load();
             checkpoint.successful_count = successful_ips_.load();
+            // 保存输入文件指纹用于校验断点有效性
+            checkpoint.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
             
             auto now_time = std::chrono::system_clock::now();
             auto time_t = std::chrono::system_clock::to_time_t(now_time);

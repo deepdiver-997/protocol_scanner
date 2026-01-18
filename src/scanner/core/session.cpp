@@ -127,10 +127,15 @@ bool ScanSession::start_one_probe(
         return false;
     }
 
-    // 若配置超时为 0，启用动态超时
+    // 计算有效超时：优先考虑动态（当全局为0时），并与协议默认超时取最大值
     Timeout effective_timeout = timeout;
     if (effective_timeout.count() == 0) {
         effective_timeout = LatencyManager::instance().get_timeout(target_.ip);
+    }
+    // 按照约定：每个协议的最终超时 = max(协议默认超时, 全局/动态超时)
+    Timeout proto_default = proto_ptr->default_timeout();
+    if (proto_default > effective_timeout) {
+        effective_timeout = proto_default;
     }
 
     // 提交任务到扫描线程池，实际 IO 在 exec 所属 io_context

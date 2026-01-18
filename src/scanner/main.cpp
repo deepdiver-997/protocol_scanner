@@ -21,6 +21,7 @@
 #include <unistd.h>      // for sysconf
 #include <cstring>
 #include <cerrno>
+#include <cstdlib>
 
 namespace po = boost::program_options;
 namespace scanner {
@@ -114,8 +115,9 @@ static volatile bool g_shutdown_requested = false;
 // =====================
 
 void signal_handler(int signum) {
-    LOG_CORE_INFO("Received signal {}, shutting down gracefully...", signum);
     g_shutdown_requested = true;
+    // 立即退出，避免长时间等待线程结束（systemd 会根据策略重启）
+    std::_Exit(0);
 }
 
 void setup_signal_handlers() {
@@ -149,6 +151,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("retry_count")) config.retry_count = s["retry_count"];
                 if (s.contains("only_success")) config.only_success = s["only_success"];
                 if (s.contains("max_work_count")) config.max_work_count = s["max_work_count"];
+                if (s.contains("targets_max_size")) config.targets_max_size = s["targets_max_size"];
             }
 
             // ===== Protocols 配置 =====
@@ -185,6 +188,11 @@ ScannerConfig load_config(const string& config_file) {
                         config.output_formats.clear();
                         config.output_formats.push_back(fmt.get<std::string>());
                     }
+                    std::cout << "Loaded output formats: ";
+                    for (const auto& f : config.output_formats) {
+                        std::cout << f << " ";
+                    }
+                    std::cout << std::endl;
                 }
                 if (o.contains("directory")) config.output_dir = o["directory"];
                 if (o.contains("write_mode")) {
@@ -318,7 +326,7 @@ int main(int argc, char* argv[]) {
         // 显示版本
         if (vm.count("version")) {
             cout << "Protocol Scanner v1.0.0" << endl;
-            cout << "Built with: C++20, Boost.Asio, OpenMP" << endl;
+            cout << "Built with: C++20, Boost.Asio" << endl;
             return 0;
         }
 
@@ -467,11 +475,13 @@ int main(int argc, char* argv[]) {
         if (vm.count("output")) {
             config.output_dir = vm["output"].as<string>();
         }
-        if (vm.count("format")) {
+        // 仅当显式指定 --format 时才覆盖配置文件的 output_format
+        if (!vm["format"].defaulted()) {
             auto fmt = vm["format"].as<string>();
             // 兼容简写：txt -> text
             if (fmt == "txt") fmt = "text";
             config.output_format = fmt;
+            LOG_CORE_INFO("Output format override from command line: {}", config.output_format);
         }
 
         // 设置日志级别
@@ -581,7 +591,9 @@ int main(int argc, char* argv[]) {
             ResultHandler rh;
             rh.set_format(config.output_format == "json" ? OutputFormat::JSON :
                          config.output_format == "csv" ? OutputFormat::CSV :
-                         config.output_format == "report" ? OutputFormat::REPORT : OutputFormat::TEXT);
+                         config.output_format == "report" ? OutputFormat::REPORT :
+                         config.output_format == "required_fomat" ? OutputFormat::REQUIRED :
+                         OutputFormat::TEXT);
             rh.set_only_success(only_success);
 
             std::ostringstream oss;
@@ -632,6 +644,7 @@ int main(int argc, char* argv[]) {
                 std::string ext = "txt";
                 if (config.output_format == "json") ext = "json";
                 else if (config.output_format == "csv") ext = "csv";
+                else if (config.output_format == "required_fomat") ext = "txt";
                 else ext = "txt";
 
                 std::string out_path = config.output_dir;

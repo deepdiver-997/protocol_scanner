@@ -64,7 +64,7 @@ struct ScannerConfig {
     bool output_enable_csv = true;
     bool output_enable_report = false;
     bool output_to_console = false;
-    std::string output_format = "text";       // 主输出格式
+    std::string output_format = "required_format";       // 主输出格式
 
     // Logging 配置
     std::string logging_level = "INFO";

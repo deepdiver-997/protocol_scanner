@@ -18,7 +18,8 @@ enum class OutputFormat {
     JSON,       // JSON 格式
     CSV,        // CSV 格式
     TEXT,       // 人类可读文本
-    REPORT      // 详细报告
+    REPORT,     // 详细报告
+    REQUIRED    // 用户自定义 required_format
 };
 
 // =====================
@@ -32,6 +33,8 @@ public:
 
     // 设置输出格式
     void set_format(OutputFormat format) { format_ = format; }
+
+    int get_format() const { return static_cast<int>(format_); }
 
     // 设置是否仅输出成功结果
     void set_only_success(bool only) { only_success_ = only; }
@@ -64,6 +67,10 @@ private:
 
     // 文本格式化
     std::string to_text(const ScanReport& report) const;
+
+    // required_format 格式化
+    std::string to_required(const ScanReport& report) const;
+    std::string to_required(const std::vector<ScanReport>& reports) const;
 
     // 报告格式化
     std::string to_report(const ScanReport& report) const;

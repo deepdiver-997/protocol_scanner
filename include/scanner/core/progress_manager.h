@@ -36,12 +36,12 @@ public:
     // 检查是否存在有效的进度文件
     bool has_valid_checkpoint() const;
 
+    // 计算文件 hash（用于验证输入文件是否变化）
+    static std::string compute_file_hash(const std::string& filepath);
+
 private:
     std::string checkpoint_file_;
     std::mutex mutex_;
-    
-    // 计算文件 hash（用于验证输入文件是否变化）
-    static std::string compute_file_hash(const std::string& filepath);
 };
 
 } // namespace scanner
