@@ -42,6 +42,7 @@ public:
 private:
     std::string checkpoint_file_;
     std::mutex mutex_;
+    size_t last_loaded_processed_count_ = 0;  // 保证断点计数单调递增
 };
 
 } // namespace scanner

@@ -30,6 +30,8 @@ temp/
 *.bak
 *.docx
 docs/*.md
+docs/*.txt
+docs/count*
 !ARCHITECTURE.md
 !CONFIGURATION.md
 

@@ -68,6 +68,65 @@ EXTRA_CMAKE_ARGS="-DENABLE_LOGGING=OFF" ./build.sh Release clean
 ./tests/run_smoke.sh
 ```
 
+### Checkpoint & Resume Scanning
+
+The scanner supports **automatic checkpoint-based resume** for long-running scans. If a scan is interrupted, it can resume from the last processed target without re-scanning.
+
+```bash
+# Normal scan (with auto-checkpoints)
+./build/scanner --domains large_list.txt --scan -o ./result
+
+# If interrupted (Ctrl+C), a progress file is created:
+# result/large_list.txt.progress.json
+
+# Resume from checkpoint (automatic)
+# Simply run the same command again - the scanner detects the progress file and resumes
+./build/scanner --domains large_list.txt --scan -o ./result
+# Output: [info] Checkpoint loaded: 192.168.1.100 (processed: 5000, successful: 1200)
+
+# Clear checkpoint and restart from beginning
+rm result/large_list.txt.progress.json
+./build/scanner --domains large_list.txt --scan -o ./result
+```
+
+#### Checkpoint File Format
+
+Progress files are saved as `{output_dir}/{input_filename}.progress.json`:
+
+```json
+{
+  "last_ip": "192.168.1.100",
+  "processed_count": 5000,
+  "successful_count": 1200,
+  "timestamp": "2024-01-19 14:30:45",
+  "input_file_hash": "c8f0_1705680645_18446744073709551615"
+}
+```
+
+| Field | Type | Meaning |
+|-------|------|---------|
+| `last_ip` | string | Last processed IP/domain (resume point) |
+| `processed_count` | integer | Total targets processed (including failed) |
+| `successful_count` | integer | Number of successful probes |
+| `timestamp` | string | UTC timestamp of last save (YYYY-MM-DD HH:MM:SS) |
+| `input_file_hash` | string | File fingerprint (size + mtime + header CRC). Prevents resuming with modified input files |
+
+**Features**:
+- ✅ **Automatic Detection**: No command-line flags needed - resume happens automatically
+- ✅ **File Validation**: If input file changes (hash mismatch), checkpoint is ignored and scan restarts
+- ✅ **Periodic Saving**: Checkpoint saved every N operations (configurable via `checkpoint_interval`)
+- ✅ **Thread-Safe**: Internal locking ensures safe concurrent access
+- ✅ **Auto-Skip**: Resumes skip all processed targets transparently
+
+**Configuration** (in `config/scanner_config.json`):
+```json
+{
+  "scanner": {
+    "checkpoint_interval": 1000      // Save progress every 1000 operations
+  }
+}
+```
+
 ### Input File Formats
 
 The scanner supports multiple input formats:
@@ -166,6 +225,73 @@ protocol-scanner/
 ```
 
 ## Core Components
+
+### 0. ProgressManager (Checkpoint & Resume)
+
+**File**: `include/scanner/core/progress_manager.h`
+
+The ProgressManager handles **automatic checkpoint and resume** functionality:
+
+**Key Responsibilities**:
+- Save scan progress periodically to `{output_dir}/{input_filename}.progress.json`
+- Load and validate checkpoint when scan restarts
+- Detect input file changes using file hash to prevent stale checkpoints
+- Enable transparent resume from last processed target
+
+**Checkpoint Structure**:
+
+```json
+{
+  "last_ip": "192.168.1.100",           // Last processed target (resume point)
+  "processed_count": 5000,               // Total targets scanned
+  "successful_count": 1200,              // Successful probes found
+  "timestamp": "2024-01-19 14:30:45",   // UTC save time
+  "input_file_hash": "c8f0_1705680645_..." // File fingerprint for validation
+}
+```
+
+**Field Descriptions**:
+
+| Field | Purpose |
+|-------|---------|
+| `last_ip` | The exact IP/domain to resume from. Scans skip all targets until reaching this point. |
+| `processed_count` | Total targets processed (both successful and failed). Used for progress reporting. |
+| `successful_count` | Count of successful protocol connections found. Updated in real-time. |
+| `timestamp` | ISO timestamp of last checkpoint save. Helps track scan timeline. |
+| `input_file_hash` | Fingerprint combining file size + modification time + header CRC. **If input file is modified, hash won't match and resume is disabled (full restart required).** |
+
+**Usage Pattern**:
+
+```
+Scan Started
+    ↓
+Check for existing checkpoint → Found
+    ↓
+Load checkpoint, skip to last_ip
+    ↓
+Resume scanning from next target
+    ↓
+Every N operations: Save new checkpoint (update counts)
+    ↓
+Scan Complete → Delete checkpoint file
+```
+
+**Key Features**:
+- ✅ **Automatic Detection**: No flags needed - runs transparently
+- ✅ **Validation**: File hash prevents using stale checkpoints with modified inputs
+- ✅ **Atomic Operations**: Thread-safe with mutex protection
+- ✅ **Configurable Interval**: Control checkpoint frequency via `checkpoint_interval` config
+
+**Example**: Resuming a 100k target scan after interruption:
+```bash
+# First run interrupted after 5000 targets
+./build/scanner --domains 100k_ips.txt --scan -o ./result
+# Creates: result/100k_ips.txt.progress.json
+
+# Second run resumes automatically from target 5001
+./build/scanner --domains 100k_ips.txt --scan -o ./result
+# [info] Checkpoint loaded: 192.168.1.100 (processed: 5000, successful: 1200)
+```
 
 ### 1. Scanner (Main Orchestrator)
 

@@ -557,6 +557,7 @@ int main(int argc, char* argv[]) {
             auto start_tp = std::chrono::steady_clock::now();
             const bool streaming_mode = (config.output_write_mode == "stream");
             
+            std::cout << "Starting scanning on UTC time: " << std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) << std::endl;
             // 启动扫描（异步）
             scanner.start(domains_file);
             

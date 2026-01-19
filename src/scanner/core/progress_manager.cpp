@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <functional>
 #include <iomanip>
+#include <iostream>
 #include <sstream>
 
 namespace scanner {
@@ -52,9 +53,11 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     try {
+        // 保障 processed_count 不倒退：与上次加载值取最大
+        size_t processed_to_store = std::max(info.processed_count, last_loaded_processed_count_);
         nlohmann::json j;
         j["last_ip"] = info.last_ip;
-        j["processed_count"] = info.processed_count;
+        j["processed_count"] = processed_to_store;
         j["successful_count"] = info.successful_count;
         j["timestamp"] = info.timestamp;
         j["input_file_hash"] = info.input_file_hash;
@@ -69,7 +72,7 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
         ofs.close();
         
         LOG_CORE_DEBUG("Checkpoint saved: {} ({} processed, {} successful)", 
-                      info.last_ip, info.processed_count, info.successful_count);
+                      info.last_ip, processed_to_store, info.successful_count);
         return true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to save checkpoint: {}", e.what());
@@ -101,9 +104,15 @@ bool ProgressManager::load_checkpoint(CheckpointInfo& info) {
         info.successful_count = j.value("successful_count", 0);
         info.timestamp = j.value("timestamp", "");
         info.input_file_hash = j.value("input_file_hash", "");
+        last_loaded_processed_count_ = info.processed_count;
         
         LOG_CORE_INFO("Checkpoint loaded: {} (processed: {}, successful: {})", 
                      info.last_ip, info.processed_count, info.successful_count);
+        // Even with logging disabled, emit a console hint so systemd/journalctl can capture it.
+        std::cout << "[checkpoint] loaded file=" << checkpoint_file_ 
+              << " last_ip=" << info.last_ip
+              << " processed=" << info.processed_count
+              << " successful=" << info.successful_count << std::endl;
         return true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to load checkpoint: {}", e.what());

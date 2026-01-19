@@ -13,6 +13,7 @@
 #include <thread>
 #include <chrono>
 #include <filesystem>
+#include <iostream>
 
 namespace scanner {
 
@@ -126,6 +127,7 @@ void Scanner::start(const std::string& source_path) {
             CheckpointInfo checkpoint;
             bool has_checkpoint = progress_manager_->has_valid_checkpoint() && 
                                   progress_manager_->load_checkpoint(checkpoint);
+            std::cout << "has checkpoint: " << has_checkpoint << std::endl;
             
             std::string skip_until_ip = has_checkpoint ? checkpoint.last_ip : "";
             bool skip_mode = !skip_until_ip.empty();
