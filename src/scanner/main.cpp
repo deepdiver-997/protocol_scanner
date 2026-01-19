@@ -1,7 +1,5 @@
 // #include "scanner/core/scanner.h"  // TODO: 实现 scanner.cpp 后启用
 // #include "scanner/vendor/vendor_detector.h"  // TODO: 实现 vendor_detector.cpp 后启用
-#include "scanner/output/result_handler.h"
-#include "scanner/protocols/protocol_base.h"
 #include "scanner/core/scanner.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
@@ -14,7 +12,6 @@
 #include <fstream>
 #include <chrono>
 #include <filesystem>
-#include <sstream>
 #include <signal.h>
 
 #include <sys/resource.h> // for getrlimit
@@ -470,6 +467,9 @@ int main(int argc, char* argv[]) {
         if (vm.count("scan-all-ports")) {
             config.scan_all_ports = true;
         }
+        if (vm.count("vendor-file")) {
+            config.vendor_pattern_file = vm["vendor-file"].as<string>();
+        }
 
         // 覆盖输出目录与格式
         if (vm.count("output")) {
@@ -530,23 +530,6 @@ int main(int argc, char* argv[]) {
             LOG_CORE_INFO("Thread count: {} (legacy mode)", config.thread_count);
         }
 
-        // 初始化 Vendor Detector
-        std::unique_ptr<VendorDetector> vendor_detector;
-        // 默认使用配置文件指定的 pattern_file；未指定时回退到 output_dir/vendors.json
-        string vendor_file = config.vendor_pattern_file.empty()
-            ? (config.output_dir + "/vendors.json")
-            : config.vendor_pattern_file;
-        if (config.enable_vendor) {
-            vendor_detector = std::make_unique<VendorDetector>();
-            if (vm.count("vendor-file")) {
-                vendor_file = vm["vendor-file"].as<string>();
-            }
-            if (!vendor_detector->load_patterns(vendor_file)) {
-                LOG_CORE_WARN("Failed to load vendor patterns from {}", vendor_file);
-                vendor_detector = nullptr;
-            }
-        }
-
         if (vm.count("scan")) {
             // 检查系统限制并自动调整配置
             check_system_limits(config);
@@ -555,118 +538,18 @@ int main(int argc, char* argv[]) {
             LOG_CORE_INFO("Starting scan with input source: {}", domains_file);
             Scanner scanner(config);
             auto start_tp = std::chrono::steady_clock::now();
-            const bool streaming_mode = (config.output_write_mode == "stream");
             
             std::cout << "Starting scanning on UTC time: " << std::chrono::system_clock::to_time_t(std::chrono::system_clock::now()) << std::endl;
             // 启动扫描（异步）
             scanner.start(domains_file);
             
             // 等待完成并获取结果（最多等待 1 小时）
-            auto reports = scanner.get_results(std::chrono::milliseconds(-1));
+            scanner.get_results(std::chrono::milliseconds(-1));
             
             auto end_tp = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_tp - start_tp);
             (void)duration; // silence unused when logging disabled
             LOG_CORE_INFO("Scan completed in {} seconds", duration.count());
-
-            // Vendor 检测
-            if (vendor_detector) {
-                for (auto& rep : reports) {
-                    for (auto& pr : rep.protocols) {
-                        if (pr.accessible && !pr.attrs.banner.empty()) {
-                            int vendor_id = vendor_detector->detect_vendor(pr.attrs.banner);
-                            if (vendor_id > 0) {
-                                pr.attrs.vendor = vendor_detector->get_vendor_name(vendor_id);
-                                vendor_detector->update_matched_ids(vendor_id,
-                                    std::hash<std::string>{}(pr.host + ":" + std::to_string(pr.port)));
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 检查是否只输出成功结果
-            bool only_success = config.only_success;
-
-            // 使用 ResultHandler 生成结果
-            ResultHandler rh;
-            rh.set_format(config.output_format == "json" ? OutputFormat::JSON :
-                         config.output_format == "csv" ? OutputFormat::CSV :
-                         config.output_format == "report" ? OutputFormat::REPORT :
-                         config.output_format == "required_fomat" ? OutputFormat::REQUIRED :
-                         OutputFormat::TEXT);
-            rh.set_only_success(only_success);
-
-            std::ostringstream oss;
-            if (!streaming_mode || config.output_to_console) {
-                oss << "\nScan Results\n";
-                oss << "============\n";
-                oss << rh.reports_to_string(reports);
-
-                // 输出 vendor 统计
-                if (vendor_detector) {
-                    auto stats = vendor_detector->get_statistics();
-                    if (!stats.empty()) {
-                        for (const auto& s : stats) {
-                            if (s.count > 0) {
-                                oss << s.name << ": " << s.count << " servers\n";
-                            }
-                        }
-                    }
-                }
-
-                if (!streaming_mode) {
-                    auto stats = scanner.get_statistics();
-                    oss << "\n================== Scan Statistics ==================\n";
-                    oss << "Total Targets: " << stats.total_targets << "\n";
-                    oss << "Successful IPs: " << stats.successful_ips << "\n";
-                    oss << "\nProtocol Success Counts:\n";
-                    for (const auto& [protocol, count] : stats.protocol_counts) {
-                        oss << "  " << protocol << ": " << count << "\n";
-                    }
-                    oss << "\nTotal Time: " << stats.total_time.count() << " ms\n";
-                    oss << "====================================================\n";
-                }
-
-                // 将结果写到控制台
-                if (config.output_to_console) {
-                    std::cout << oss.str();
-                }
-            }
-
-            // 如果指定了输出目录，则保存到文件（仅 final 模式防止与流式输出冲突）
-            if (!streaming_mode && vm.count("output")) {
-                std::error_code ec;
-                std::filesystem::create_directories(config.output_dir, ec);
-                if (ec) {
-                    LOG_CORE_WARN("Failed to create output dir '{}': {}", config.output_dir, ec.message());
-                }
-
-                std::string ext = "txt";
-                if (config.output_format == "json") ext = "json";
-                else if (config.output_format == "csv") ext = "csv";
-                else if (config.output_format == "required_fomat") ext = "txt";
-                else ext = "txt";
-
-                std::string out_path = config.output_dir;
-                if (!out_path.empty() && out_path.back() != '/') out_path += "/";
-                out_path += "scan_results." + ext;
-
-                std::ofstream ofs(out_path);
-                if (!ofs) {
-                    LOG_CORE_ERROR("Cannot open output file: {}", out_path);
-                } else {
-                    ofs << oss.str();
-                    ofs.close();
-                    LOG_CORE_INFO("Results saved to {}", out_path);
-                }
-            } else if (streaming_mode) {
-                LOG_CORE_INFO("Streaming output mode: results are written by the result handler thread to {}/scan_results.txt", config.output_dir);
-            }
-
-            if (vendor_detector) {
-                vendor_detector->save_patterns(vendor_file);
-            }
 
             return 0;
         }

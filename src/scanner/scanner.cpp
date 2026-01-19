@@ -14,6 +14,9 @@
 #include <chrono>
 #include <filesystem>
 #include <iostream>
+#include <iomanip>
+#include <sstream>
+#include <functional>
 
 namespace scanner {
 
@@ -94,6 +97,21 @@ void Scanner::start(const std::string& source_path) {
     stop_ = false;
     input_done_ = false;
     input_source_path_ = source_path;
+
+    // 初始化厂商检测（内部封装，不再由 main 管理）
+    vendor_detector_.reset();
+    vendor_pattern_path_.clear();
+    if (config_.enable_vendor) {
+        vendor_detector_ = std::make_unique<VendorDetector>();
+        vendor_pattern_path_ = config_.vendor_pattern_file.empty()
+            ? (config_.output_dir + "/vendors.json")
+            : config_.vendor_pattern_file;
+
+        if (!vendor_detector_->load_patterns(vendor_pattern_path_)) {
+            LOG_CORE_WARN("Failed to load vendor patterns from {}", vendor_pattern_path_);
+            vendor_detector_.reset();
+        }
+    }
     
     // 初始化进度管理器
     progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
@@ -117,19 +135,24 @@ void Scanner::start(const std::string& source_path) {
         end_time_ = std::chrono::steady_clock::time_point{};
     }
     timing_started_ = true;
+
+    // must load checkpoint before starting input thread
+    bool has_checkpoint = progress_manager_->has_valid_checkpoint() && progress_manager_->load_checkpoint(checkpoint_info_);
+    std::cout << "Checkpoint loaded: " << (has_checkpoint ? "yes" : "no") << std::endl;
+    if (has_checkpoint) {
+        std::cout << "Resuming from last processed IP: " << checkpoint_info_.last_ip << std::endl;
+        std::cout << "Last processed count: " << checkpoint_info_.processed_count << std::endl;
+        std::cout << "Last successful count: " << checkpoint_info_.successful_count << std::endl;
+        processed_count_ = checkpoint_info_.processed_count;
+        successful_ips_ = checkpoint_info_.successful_count;
+    }
     
     // 启动三个线程
-    input_thread_ = std::thread([this, source_path]() {
+    input_thread_ = std::thread([this, source_path, has_checkpoint]() {
         try {
             size_t loaded_count = 0;
             
-            // 加载断点信息
-            CheckpointInfo checkpoint;
-            bool has_checkpoint = progress_manager_->has_valid_checkpoint() && 
-                                  progress_manager_->load_checkpoint(checkpoint);
-            std::cout << "has checkpoint: " << has_checkpoint << std::endl;
-            
-            std::string skip_until_ip = has_checkpoint ? checkpoint.last_ip : "";
+            std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
             bool skip_mode = !skip_until_ip.empty();
             size_t skipped_count = 0;
 
@@ -169,17 +192,10 @@ void Scanner::start(const std::string& source_path) {
                 return true;
             };
 
+            // blocking call, will return after all targets are loaded
             stream_domains(source_path, 0, enqueue_target);
             
-            if (has_checkpoint) {
-                LOG_CORE_INFO("Skipped {} already-processed targets", skipped_count);
-                total_targets_ = loaded_count + checkpoint.processed_count;
-                successful_ips_ = checkpoint.successful_count;
-                processed_count_ = checkpoint.processed_count;
-            } else {
-                total_targets_ = loaded_count;
-                processed_count_ = 0;
-            }
+            total_targets_ = loaded_count;
 
             input_done_ = true;
             LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {})", 
@@ -190,8 +206,8 @@ void Scanner::start(const std::string& source_path) {
         }
     });
     
-    result_thread_ = std::thread([this]() { result_handler_thread(); });
     scan_thread_ = std::thread([this]() { scan_loop(); });
+    result_thread_ = std::thread([this]() { result_handler_thread(); });
     
     LOG_CORE_INFO("Scanner started with input source: {}", source_path);
 }
@@ -199,23 +215,15 @@ void Scanner::start(const std::string& source_path) {
 void Scanner::result_handler_thread() {
     const bool stream_mode = (config_.output_write_mode == "stream");
     auto last_flush = std::chrono::steady_clock::now();
-    std::string last_successful_ip;  // 用于记录最后一个成功的 IP
-    
+    std::string last_processed_ip;
+
     while (!stop_ || !result_queue_.empty()) {
         auto now = std::chrono::steady_clock::now();
         auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
 
-        if (stream_mode) {
-            if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
-            }
-        } else {
-            if (result_queue_.empty()) {
-                if (stop_) break;
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
-            }
+        if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(50));
+            continue;
         }
 
         std::vector<ScanReport> batch;
@@ -229,7 +237,22 @@ void Scanner::result_handler_thread() {
             continue;
         }
 
-        // 更新统计信息
+        // 厂商识别
+        if (vendor_detector_) {
+            for (auto& r : batch) {
+                for (auto& pr : r.protocols) {
+                    if (!pr.accessible || pr.attrs.banner.empty()) continue;
+                    int vendor_id = vendor_detector_->detect_vendor(pr.attrs.banner);
+                    if (vendor_id > 0) {
+                        pr.attrs.vendor = vendor_detector_->get_vendor_name(vendor_id);
+                        const int server_id = static_cast<int>(std::hash<std::string>{}(pr.host + ":" + std::to_string(pr.port)));
+                        vendor_detector_->update_matched_ids(vendor_id, server_id);
+                    }
+                }
+            }
+        }
+
+        // 更新统计 & 保存结果
         for (const auto& r : batch) {
             bool has_success = false;
             {
@@ -246,12 +269,14 @@ void Scanner::result_handler_thread() {
             }
 
             processed_count_++;
-            // 记录最后处理的 IP（不论成功与否，用于断点）
-            last_successful_ip = r.target.ip;
-            checkpoint_counter_++;
+            last_processed_ip = !r.target.ip.empty() ? r.target.ip : r.target.domain;
         }
 
-        // 流式写入文件（在移动 batch 之前）
+        {
+            std::lock_guard<std::mutex> lock(reports_mutex_);
+            completed_reports_.insert(completed_reports_.end(), batch.begin(), batch.end());
+        }
+
         if (stream_mode) {
             if (!report_ofs_.is_open()) {
                 std::error_code ec;
@@ -260,7 +285,7 @@ void Scanner::result_handler_thread() {
                 if (!out_path.empty() && out_path.back() != '/') out_path += "/";
                 out_path += "scan_results.txt";
                 report_ofs_.open(out_path, std::ios::app);
-                if (report_ofs_.is_open() && !header_written_) {
+                if (checkpoint_info_.last_ip.empty() && report_ofs_.is_open() && !header_written_) {
                     report_ofs_ << "Scan Results\n";
                     report_ofs_ << "============\n";
                     header_written_ = true;
@@ -273,61 +298,132 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        // 周期性保存进度（checkpoint）
-        if (progress_manager_ && checkpoint_counter_ >= config_.checkpoint_interval) {
-            CheckpointInfo checkpoint;
-            checkpoint.last_ip = last_successful_ip;
-            checkpoint.processed_count = processed_count_.load();
-            checkpoint.successful_count = successful_ips_.load();
-            // 保存输入文件指纹用于校验断点有效性
-            checkpoint.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
-            
-            auto now_time = std::chrono::system_clock::now();
-            auto time_t = std::chrono::system_clock::to_time_t(now_time);
-            std::stringstream ss;
-            ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
-            checkpoint.timestamp = ss.str();
-            
-            progress_manager_->save_checkpoint(checkpoint);
-            checkpoint_counter_ = 0;  // 重置计数器
+        // 保存进度（checkpoint）
+        checkpoint_info_.last_ip = last_processed_ip;
+        checkpoint_info_.processed_count = processed_count_.load();
+        checkpoint_info_.successful_count = successful_ips_.load();
+        checkpoint_info_.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
+
+        auto now_time = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now_time);
+        std::stringstream ss;
+        ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
+        checkpoint_info_.timestamp = ss.str();
+
+        if (progress_manager_) {
+            progress_manager_->save_checkpoint(checkpoint_info_);
         }
 
         reports_cv_.notify_one();
 
         last_flush = std::chrono::steady_clock::now();
     }
-    
-    if (stream_mode && report_ofs_.is_open()) {
-        report_ofs_ << "\n================== 扫描统计 ==================\n";
-        report_ofs_ << "总目标数: " << total_targets_.load() << "\n";
-        report_ofs_ << "成功探测IP数: " << successful_ips_.load() << "\n";
-        report_ofs_ << "\n各协议成功数:\n";
-        {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
-            for (const auto& [protocol, count] : protocol_success_counts_) {
-                report_ofs_ << "  " << protocol << ": " << count << "\n";
-            }
-        }
-        if (timing_started_.load()) {
-            std::lock_guard<std::mutex> lock(stats_mutex_);
-            auto end = end_time_;
-            // 如果 end_time_ 还未设置（scan_loop 未完成），使用当前时间
-            if (end == std::chrono::steady_clock::time_point{}) {
-                end = std::chrono::steady_clock::now();
-            }
-            auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start_time_);
-            report_ofs_ << "\n总耗时: " << duration.count() << " ms\n";
-        }
-        report_ofs_ << "============================================\n";
-        report_ofs_.flush();
-        report_ofs_.close();
-        
-        // 扫描完成，清除进度文件
-        if (progress_manager_) {
-            progress_manager_->clear_checkpoint();
+
+    // 确保结束时间已记录
+    if (timing_started_.load()) {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        if (end_time_ == std::chrono::steady_clock::time_point{}) {
+            end_time_ = std::chrono::steady_clock::now();
         }
     }
-    
+
+    // 最终输出
+    auto stats = get_statistics();
+    auto append_vendor_stats = [this](std::ostream& os) {
+        if (!vendor_detector_) return;
+        auto stats_vec = vendor_detector_->get_statistics();
+        for (const auto& s : stats_vec) {
+            if (s.count > 0) {
+                os << s.name << ": " << s.count << " servers\n";
+            }
+        }
+    };
+
+    std::string summary_output;
+    if (config_.output_to_console || !stream_mode) {
+        std::ostringstream oss;
+        oss << "\nScan Results\n";
+        oss << "============\n";
+        if (result_handler_) {
+            oss << result_handler_->reports_to_string(completed_reports_);
+        }
+        if (vendor_detector_) {
+            oss << "Vendor Statistics:\n";
+            append_vendor_stats(oss);
+        }
+        oss << "\n================== Scan Statistics ==================\n";
+        oss << "Total Targets: " << stats.total_targets << "\n";
+        oss << "Successful IPs: " << stats.successful_ips << "\n";
+        oss << "\nProtocol Success Counts:\n";
+        for (const auto& [protocol, count] : stats.protocol_counts) {
+            oss << "  " << protocol << ": " << count << "\n";
+        }
+        if (stats.total_time.count() > 0) {
+            oss << "\nTotal Time: " << stats.total_time.count() << " ms\n";
+        }
+        oss << "====================================================\n";
+        summary_output = oss.str();
+    }
+
+    if (stream_mode && report_ofs_.is_open()) {
+        report_ofs_ << "\n================== Scan Statistics ==================\n";
+        report_ofs_ << "Total Targets: " << stats.total_targets << "\n";
+        report_ofs_ << "Successful IPs: " << stats.successful_ips << "\n";
+        report_ofs_ << "\nProtocol Success Counts:\n";
+        for (const auto& [protocol, count] : stats.protocol_counts) {
+            report_ofs_ << "  " << protocol << ": " << count << "\n";
+        }
+        if (vendor_detector_) {
+            report_ofs_ << "\nVendor Statistics:\n";
+            append_vendor_stats(report_ofs_);
+        }
+        if (stats.total_time.count() > 0) {
+            report_ofs_ << "\nTotal Time: " << stats.total_time.count() << " ms\n";
+        }
+        report_ofs_ << "====================================================\n";
+        report_ofs_.flush();
+        report_ofs_.close();
+    }
+
+    if (!stream_mode) {
+        std::error_code ec;
+        fs::create_directories(config_.output_dir, ec);
+        if (ec) {
+            LOG_CORE_WARN("Failed to create output dir '{}': {}", config_.output_dir, ec.message());
+        }
+
+        std::string ext = "txt";
+        const std::string fmt = config_.output_format;
+        if (fmt == "json") ext = "json";
+        else if (fmt == "csv") ext = "csv";
+        else if (fmt == "required_format") ext = "txt";
+
+        std::string out_path = config_.output_dir;
+        if (!out_path.empty() && out_path.back() != '/') out_path += "/";
+        out_path += "scan_results." + ext;
+
+        std::ofstream ofs(out_path);
+        if (!ofs) {
+            LOG_CORE_ERROR("Cannot open output file: {}", out_path);
+        } else {
+            ofs << summary_output;
+            ofs.close();
+            LOG_CORE_INFO("Results saved to {}", out_path);
+        }
+    }
+
+    if (config_.output_to_console && !summary_output.empty()) {
+        std::cout << summary_output;
+    }
+
+    if (vendor_detector_ && !vendor_pattern_path_.empty()) {
+        vendor_detector_->save_patterns(vendor_pattern_path_);
+    }
+
+    if (progress_manager_) {
+        progress_manager_->clear_checkpoint();
+    }
+
     LOG_CORE_INFO("Result handler thread finished");
 }
 
@@ -437,6 +533,11 @@ void Scanner::scan_loop() {
         }
 
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(stats_mutex_);
+        end_time_ = std::chrono::steady_clock::now();
     }
     
     LOG_CORE_INFO("Scan loop completed");

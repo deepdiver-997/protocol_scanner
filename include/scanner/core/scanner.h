@@ -55,7 +55,7 @@ struct ScannerConfig {
     std::chrono::milliseconds dns_config_timeout = std::chrono::milliseconds(5000);
 
     // Checkpoint 配置
-    size_t checkpoint_interval = 10000;  // 每处理这么多条结果就保存一次进度
+    std::chrono::milliseconds checkpoint_interval = std::chrono::milliseconds(10000);
 
     // Output 配置
     std::vector<std::string> output_formats;  // ["text", "csv", "json"]
@@ -163,6 +163,9 @@ private:
     std::unique_ptr<class VendorDetector> vendor_detector_;
     std::unique_ptr<class ResultHandler> result_handler_;
 
+    // 记录解析后的厂商模式文件路径，便于结果线程保存
+    std::string vendor_pattern_path_;
+
     std::shared_ptr<ThreadPool> scan_pool_;
     std::shared_ptr<IoThreadPool> io_pool_;
 
@@ -199,8 +202,8 @@ private:
     // 进度管理
     std::unique_ptr<ProgressManager> progress_manager_;
     std::string input_source_path_;
-    size_t checkpoint_counter_ = 0;  // 自上次 checkpoint 以来处理的结果数
     std::atomic<size_t> processed_count_{0};  // 已处理（完成扫描）的目标数
+    CheckpointInfo checkpoint_info_;
 };
 
 // =====================
