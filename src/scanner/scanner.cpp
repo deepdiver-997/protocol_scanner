@@ -33,7 +33,14 @@ Scanner::Scanner(const ScannerConfig& config)
 
     LOG_CORE_INFO("Thread pools initialized: IO={} CPU={}", io_threads, cpu_threads);
     
-    dns_resolver_ = DnsResolverFactory::create(DnsResolverFactory::ResolverType::C_ARES);
+    DnsResolverFactory::ResolverType rtype = DnsResolverFactory::ResolverType::C_ARES;
+    const auto& rname = config_.dns_resolver_type;
+    if (rname == "dig") {
+        rtype = DnsResolverFactory::ResolverType::DIG;
+    } else if (rname == "cares" || rname == "c-ares") {
+        rtype = DnsResolverFactory::ResolverType::C_ARES;
+    }
+    dns_resolver_ = DnsResolverFactory::create(rtype);
     init_protocols();
 }
 
@@ -217,26 +224,7 @@ void Scanner::result_handler_thread() {
     auto last_flush = std::chrono::steady_clock::now();
     std::string last_processed_ip;
 
-    while (!stop_ || !result_queue_.empty()) {
-        auto now = std::chrono::steady_clock::now();
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
-
-        if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
-        std::vector<ScanReport> batch;
-        ScanReport rep;
-        while (result_queue_.try_pop(rep)) {
-            batch.push_back(std::move(rep));
-        }
-
-        if (batch.empty()) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(50));
-            continue;
-        }
-
+    auto process_batch = [&](std::vector<ScanReport>& batch) {
         // 厂商识别
         if (vendor_detector_) {
             for (auto& r : batch) {
@@ -272,12 +260,48 @@ void Scanner::result_handler_thread() {
             last_processed_ip = !r.target.ip.empty() ? r.target.ip : r.target.domain;
         }
 
-        {
-            std::lock_guard<std::mutex> lock(reports_mutex_);
-            completed_reports_.insert(completed_reports_.end(), batch.begin(), batch.end());
+        // 保存进度（checkpoint）
+        checkpoint_info_.last_ip = last_processed_ip;
+        checkpoint_info_.processed_count = processed_count_.load();
+        checkpoint_info_.successful_count = successful_ips_.load();
+        checkpoint_info_.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
+
+        auto now_time = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now_time);
+        std::stringstream ss;
+        ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
+        checkpoint_info_.timestamp = ss.str();
+
+        if (progress_manager_) {
+            progress_manager_->save_checkpoint(checkpoint_info_);
         }
 
-        if (stream_mode) {
+        reports_cv_.notify_one();
+    };
+
+    if (stream_mode) {
+        while (!stop_ || !result_queue_.empty()) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
+
+            if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+
+            std::vector<ScanReport> batch;
+            ScanReport rep;
+            while (result_queue_.try_pop(rep)) {
+                batch.push_back(std::move(rep));
+            }
+
+            if (batch.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+
+            process_batch(batch);
+
             if (!report_ofs_.is_open()) {
                 std::error_code ec;
                 fs::create_directories(config_.output_dir, ec);
@@ -296,27 +320,29 @@ void Scanner::result_handler_thread() {
                 report_ofs_ << result_handler_->reports_to_string(batch);
                 report_ofs_.flush();
             }
+
+            last_flush = std::chrono::steady_clock::now();
         }
+    } else {
+        std::cout << "Warning: Non-stream mode may consume large memory for storing results." << std::endl;
+        std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        while (!stop_ || !result_queue_.empty()) {
+            std::vector<ScanReport> batch;
+            ScanReport rep;
+            while (result_queue_.try_pop(rep)) {
+                batch.push_back(std::move(rep));
+            }
 
-        // 保存进度（checkpoint）
-        checkpoint_info_.last_ip = last_processed_ip;
-        checkpoint_info_.processed_count = processed_count_.load();
-        checkpoint_info_.successful_count = successful_ips_.load();
-        checkpoint_info_.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
+            if (batch.empty()) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
 
-        auto now_time = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now_time);
-        std::stringstream ss;
-        ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
-        checkpoint_info_.timestamp = ss.str();
+            process_batch(batch);
 
-        if (progress_manager_) {
-            progress_manager_->save_checkpoint(checkpoint_info_);
+            std::lock_guard<std::mutex> lock(reports_mutex_);
+            completed_reports_.insert(completed_reports_.end(), batch.begin(), batch.end());
         }
-
-        reports_cv_.notify_one();
-
-        last_flush = std::chrono::steady_clock::now();
     }
 
     // 确保结束时间已记录
@@ -329,58 +355,22 @@ void Scanner::result_handler_thread() {
 
     // 最终输出
     auto stats = get_statistics();
-    auto append_vendor_stats = [this](std::ostream& os) {
-        if (!vendor_detector_) return;
-        auto stats_vec = vendor_detector_->get_statistics();
-        for (const auto& s : stats_vec) {
-            if (s.count > 0) {
-                os << s.name << ": " << s.count << " servers\n";
-            }
-        }
-    };
-
     std::string summary_output;
     if (config_.output_to_console || !stream_mode) {
-        std::ostringstream oss;
-        oss << "\nScan Results\n";
-        oss << "============\n";
-        if (result_handler_) {
-            oss << result_handler_->reports_to_string(completed_reports_);
-        }
-        if (vendor_detector_) {
-            oss << "Vendor Statistics:\n";
-            append_vendor_stats(oss);
-        }
-        oss << "\n================== Scan Statistics ==================\n";
-        oss << "Total Targets: " << stats.total_targets << "\n";
-        oss << "Successful IPs: " << stats.successful_ips << "\n";
-        oss << "\nProtocol Success Counts:\n";
-        for (const auto& [protocol, count] : stats.protocol_counts) {
-            oss << "  " << protocol << ": " << count << "\n";
-        }
-        if (stats.total_time.count() > 0) {
-            oss << "\nTotal Time: " << stats.total_time.count() << " ms\n";
-        }
-        oss << "====================================================\n";
-        summary_output = oss.str();
+        summary_output = build_summary_output(result_handler_.get(), completed_reports_, stats, vendor_detector_.get());
     }
 
     if (stream_mode && report_ofs_.is_open()) {
-        report_ofs_ << "\n================== Scan Statistics ==================\n";
-        report_ofs_ << "Total Targets: " << stats.total_targets << "\n";
-        report_ofs_ << "Successful IPs: " << stats.successful_ips << "\n";
-        report_ofs_ << "\nProtocol Success Counts:\n";
-        for (const auto& [protocol, count] : stats.protocol_counts) {
-            report_ofs_ << "  " << protocol << ": " << count << "\n";
-        }
+        report_ofs_ << build_stats_block(stats);
         if (vendor_detector_) {
             report_ofs_ << "\nVendor Statistics:\n";
-            append_vendor_stats(report_ofs_);
+            auto stats_vec = vendor_detector_->get_statistics();
+            for (const auto& s : stats_vec) {
+                if (s.count > 0) {
+                    report_ofs_ << s.name << ": " << s.count << " servers\n";
+                }
+            }
         }
-        if (stats.total_time.count() > 0) {
-            report_ofs_ << "\nTotal Time: " << stats.total_time.count() << " ms\n";
-        }
-        report_ofs_ << "====================================================\n";
         report_ofs_.flush();
         report_ofs_.close();
     }
@@ -416,8 +406,11 @@ void Scanner::result_handler_thread() {
         std::cout << summary_output;
     }
 
-    if (vendor_detector_ && !vendor_pattern_path_.empty()) {
-        vendor_detector_->save_patterns(vendor_pattern_path_);
+    if (vendor_detector_) {
+        write_vendor_stats_file(vendor_detector_.get(), config_.output_dir);
+        if (!vendor_pattern_path_.empty()) {
+            vendor_detector_->save_patterns(vendor_pattern_path_);
+        }
     }
 
     if (progress_manager_) {
@@ -450,6 +443,13 @@ void Scanner::scan_loop() {
         return quota;
     };
 
+    auto wait_result_slot = [this]() {
+        if (config_.result_queue_max_size == 0) return;
+        while (!stop_ && result_queue_.size() >= config_.result_queue_max_size) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+
     while (!stop_) {
         int quota = estimate_quota();
 
@@ -458,12 +458,13 @@ void Scanner::scan_loop() {
             std::remove_if(
                 sessions_.begin(),
                 sessions_.end(),
-                [this](const std::unique_ptr<ScanSession>& s) {
+                [this, &wait_result_slot](const std::unique_ptr<ScanSession>& s) {
                     if (s && s->ready_to_release()) {
                         ScanReport rep;
                         rep.target = { s->domain(), s->dns_result().ip, {}, 0 };
                         rep.protocols = s->protocol_results();
                         rep.total_time = config_.probe_timeout;
+                        wait_result_slot();
                         result_queue_.push(rep);
                         return true;
                     }
@@ -594,6 +595,13 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
 
     // 启动扫描线程
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
+
+    auto wait_result_slot = [this]() {
+        if (config_.result_queue_max_size == 0) return;
+        while (!stop_ && result_queue_.size() >= config_.result_queue_max_size) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
     
     auto estimate_quota = [this]() -> int {
         int base = std::max(1, config_.thread_count);
@@ -610,12 +618,13 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
             std::remove_if(
                 sessions_.begin(),
                 sessions_.end(),
-                [this](const std::unique_ptr<ScanSession>& s) {
+                [this, &wait_result_slot](const std::unique_ptr<ScanSession>& s) {
                     if (s && s->ready_to_release()) {
                         ScanReport rep;
                         rep.target = { s->domain(), s->dns_result().ip, {}, 0 };
                         rep.protocols = s->protocol_results();
                         rep.total_time = config_.probe_timeout;
+                        wait_result_slot();
                         result_queue_.push(rep);
                         return true;
                     }

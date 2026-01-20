@@ -60,10 +60,6 @@ std::string ResultHandler::to_report(const ScanReport& report) const {
 // -------------- required_format --------------
 
 std::string ResultHandler::to_required(const ScanReport& report) const {
-    // 静态计数器：为每个唯一 IP 分配序号；单线程调用，无需原子
-    static size_t ip_seq = 0;
-    static std::unordered_map<std::string, size_t> ip_to_seq;
-
     std::ostringstream oss;
 
     // 仅保留需要输出的协议（尊重 only_success 筛选）
@@ -71,12 +67,12 @@ std::string ResultHandler::to_required(const ScanReport& report) const {
         if (only_success_ && !pr.accessible) continue;
 
         size_t seq = 0;
-        auto it = ip_to_seq.find(report.target.ip);
-        if (it != ip_to_seq.end()) {
+        auto it = ip_to_seq_.find(report.target.ip);
+        if (it != ip_to_seq_.end()) {
             seq = it->second;
         } else {
-            seq = ++ip_seq; // 新 IP 分配下一个序号
-            ip_to_seq.emplace(report.target.ip, seq);
+            seq = ++ip_seq_; // 新 IP 分配下一个序号
+            ip_to_seq_.emplace(report.target.ip, seq);
         }
 
         oss << seq << ','

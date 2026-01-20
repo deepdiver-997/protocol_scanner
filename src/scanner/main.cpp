@@ -149,6 +149,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("only_success")) config.only_success = s["only_success"];
                 if (s.contains("max_work_count")) config.max_work_count = s["max_work_count"];
                 if (s.contains("targets_max_size")) config.targets_max_size = s["targets_max_size"];
+                if (s.contains("result_queue_max_size")) config.result_queue_max_size = s["result_queue_max_size"];
             }
 
             // ===== Protocols 配置 =====

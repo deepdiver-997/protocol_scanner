@@ -1,5 +1,7 @@
 #include "scanner/core/scanner.h"
 #include "scanner/common/logger.h"
+#include "scanner/vendor/vendor_detector.h"
+#include "scanner/output/result_handler.h"
 #include <fstream>
 #include <string>
 #include <vector>
@@ -9,6 +11,7 @@
 #include <sstream>
 #include <cmath>
 #include <functional>
+#include <sstream>
 
 namespace scanner {
 
@@ -251,6 +254,73 @@ bool is_valid_ip_address(const std::string& s) {
     } catch (...) {
         return false;
     }
+}
+
+// =====================
+// 输出/统计辅助
+// =====================
+
+static void append_vendor_stats(std::ostream& os, const VendorDetector* vendor_detector) {
+    if (!vendor_detector) return;
+    auto stats_vec = vendor_detector->get_statistics();
+    for (const auto& s : stats_vec) {
+        if (s.count > 0) {
+            os << s.name << ": " << s.count << " servers\n";
+        }
+    }
+}
+
+std::string build_stats_block(const Scanner::ScanStatistics& stats) {
+    std::ostringstream oss;
+    oss << "\n================== Scan Statistics ==================\n";
+    oss << "Total Targets: " << stats.total_targets << "\n";
+    oss << "Successful IPs: " << stats.successful_ips << "\n";
+    oss << "\nProtocol Success Counts:\n";
+    for (const auto& [protocol, count] : stats.protocol_counts) {
+        oss << "  " << protocol << ": " << count << "\n";
+    }
+    if (stats.total_time.count() > 0) {
+        oss << "\nTotal Time: " << stats.total_time.count() << " ms\n";
+    }
+    oss << "====================================================\n";
+    return oss.str();
+}
+
+std::string build_summary_output(
+    const ResultHandler* handler,
+    const std::vector<ScanReport>& reports,
+    const Scanner::ScanStatistics& stats,
+    const VendorDetector* vendor_detector
+) {
+    std::ostringstream oss;
+    oss << "\nScan Results\n";
+    oss << "============\n";
+    if (handler) {
+        oss << handler->reports_to_string(reports);
+    }
+    if (vendor_detector) {
+        oss << "Vendor Statistics:\n";
+        append_vendor_stats(oss, vendor_detector);
+    }
+    oss << build_stats_block(stats);
+    return oss.str();
+}
+
+void write_vendor_stats_file(const VendorDetector* vendor_detector, const std::string& output_dir) {
+    if (!vendor_detector) return;
+    std::error_code ec;
+    fs::create_directories(output_dir, ec);
+    std::string out_path = output_dir;
+    if (!out_path.empty() && out_path.back() != '/') out_path += "/";
+    out_path += "vendor_stats.txt";
+
+    std::ofstream ofs(out_path, std::ios::trunc);
+    if (!ofs) {
+        LOG_CORE_WARN("Failed to open vendor stats file: {}", out_path);
+        return;
+    }
+    append_vendor_stats(ofs, vendor_detector);
+    ofs.flush();
 }
 
 } // namespace scanner
