@@ -31,6 +31,7 @@ struct ScannerConfig {
     int thread_count = 4;            // 废弃：保留向后兼容
     int batch_size = 100;            // 批处理大小
     size_t targets_max_size = 100000; // 最大待处理目标数（默认 10 万）
+    size_t result_queue_max_size = 5000; // 结果队列上限，防止内存膨胀（0 表示不限制）
     std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(1000);
     std::chrono::milliseconds probe_timeout = std::chrono::milliseconds(2000);  // 探测超时时间，0 表示启用动态超时
     int retry_count = 1;             // 重试次数
@@ -233,6 +234,20 @@ void save_reports(
     const std::vector<ScanReport>& reports,
     std::ofstream& ofs
 );
+
+// 构建汇总输出（含结果、厂商、统计）
+std::string build_summary_output(
+    const class ResultHandler* handler,
+    const std::vector<ScanReport>& reports,
+    const Scanner::ScanStatistics& stats,
+    const class VendorDetector* vendor_detector
+);
+
+// 构建仅统计块（无单条结果）
+std::string build_stats_block(const Scanner::ScanStatistics& stats);
+
+// 写出厂商统计到独立文件
+void write_vendor_stats_file(const class VendorDetector* vendor_detector, const std::string& output_dir);
 
 // 导出 JSON 格式
 std::string report_to_json(const ScanReport& report);

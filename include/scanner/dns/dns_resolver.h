@@ -4,6 +4,7 @@
 #include <vector>
 #include <memory>
 #include <chrono>
+#include <atomic>
 #include <ares.h>
 
 #include "../protocols/protocol_base.h"
@@ -167,9 +168,23 @@ public:
 
 private:
     ares_channel channel_ = nullptr;
+    std::atomic<int> pending_requests_{0};      // 追踪待处理请求数
+    std::mutex channel_mutex_;                  // 保护 channel_ 访问
+    std::atomic<bool> shutting_down_{false};    // 标记是否正在关闭
+    
     bool init_channel();
     void destroy_channel();
     bool run_event_loop(Timeout timeout, std::atomic<bool>& done);
+    
+    // 安全获取 channel，检查是否在关闭
+    ares_channel get_channel();
+    
+    // 增加和减少待处理请求计数
+    void increment_pending();
+    void decrement_pending();
+
+    // 取消当前通道上的所有未完成查询（用于错误/超时收尾）
+    void cancel_all_queries();
 };
 
 } // namespace scanner

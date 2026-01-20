@@ -28,7 +28,7 @@
       "timeout_ms": 3000
     },
     "HTTP": {
-      "enabled": false,
+      "enabled": true,
       "ports": [80, 443, 8080],
       "timeout_ms": 3000
     },

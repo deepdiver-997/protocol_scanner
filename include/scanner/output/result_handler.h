@@ -7,6 +7,7 @@
 #include <fstream>
 #include <sstream>
 #include <iomanip>
+#include <unordered_map>
 
 namespace scanner {
 
@@ -83,6 +84,8 @@ private:
 
     OutputFormat format_ = OutputFormat::TEXT;
     bool only_success_ = false;
+    mutable std::size_t ip_seq_ = 0;
+    mutable std::unordered_map<std::string, std::size_t> ip_to_seq_;
 };
 
 // =====================

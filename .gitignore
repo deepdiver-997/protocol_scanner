@@ -29,6 +29,7 @@ temp/
 *~
 *.bak
 *.docx
+docs/
 docs/*.md
 docs/*.txt
 docs/count*
