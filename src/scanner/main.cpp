@@ -113,9 +113,27 @@ static volatile bool g_shutdown_requested = false;
 // =====================
 
 void signal_handler(int signum) {
+    const char* signal_name = "UNKNOWN";
+    switch (signum) {
+        case SIGTERM: signal_name = "SIGTERM"; break;
+        case SIGINT: signal_name = "SIGINT"; break;
+        case SIGKILL: signal_name = "SIGKILL"; break;
+        case SIGSEGV: signal_name = "SIGSEGV"; break;
+    }
+    
+    // 快速写入退出原因到文件
+    std::ofstream ofs("./result/last_exit.log", std::ios::app);
+    if (ofs) {
+        auto now = std::time(nullptr);
+        ofs << std::ctime(&now) 
+            << "Exit due to signal: " << signal_name 
+            << " (" << signum << ")\n";
+        ofs.flush();
+        ofs.close();
+    }
+    
     g_shutdown_requested = true;
-    // 立即退出，避免长时间等待线程结束（systemd 会根据策略重启）
-    std::_Exit(0);
+    std::_Exit(128 + signum);  // 标准退出码
 }
 
 void setup_signal_handlers() {
