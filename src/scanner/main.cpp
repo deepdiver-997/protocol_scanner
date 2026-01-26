@@ -1,6 +1,7 @@
 // #include "scanner/core/scanner.h"  // TODO: 实现 scanner.cpp 后启用
 // #include "scanner/vendor/vendor_detector.h"  // TODO: 实现 vendor_detector.cpp 后启用
 #include "scanner/core/scanner.h"
+#include "scanner/core/crash_inspector.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
 #ifndef SCANNER_DISABLE_LOGGING
@@ -123,6 +124,40 @@ void setup_signal_handlers() {
 }
 
 // =====================
+// 启动诊断：在发现进度文件时先记录崩溃相关信息
+// =====================
+
+bool run_startup_inspection(const std::string& domains_file, const ScannerConfig& config) {
+    if (!config.enable_crash_inspection) {
+        return false;
+    }
+
+    ProgressManager pm(domains_file, config.output_dir);
+    const std::string progress_file = pm.get_checkpoint_file();
+
+    if (!pm.has_valid_checkpoint()) {
+        LOG_CORE_INFO("No checkpoint found at startup: {}", progress_file);
+        return false;
+    }
+
+    auto inspector = CrashInspector::create();
+    if (!inspector || !inspector->supported()) {
+        LOG_CORE_INFO("Crash inspector not available on this platform; skipping startup inspection");
+        return false;
+    }
+
+    std::string diag_path = config.output_dir;
+    if (!diag_path.empty() && diag_path.back() != '/') diag_path += "/";
+    diag_path += "startup_diagnostics.log";
+
+    const bool executed = inspector->inspect(progress_file, diag_path);
+    if (executed) {
+        LOG_CORE_INFO("Startup inspection completed, diagnostics at {}", diag_path);
+    }
+    return executed;
+}
+
+// =====================
 // 配置加载器
 // =====================
 
@@ -150,6 +185,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("max_work_count")) config.max_work_count = s["max_work_count"];
                 if (s.contains("targets_max_size")) config.targets_max_size = s["targets_max_size"];
                 if (s.contains("result_queue_max_size")) config.result_queue_max_size = s["result_queue_max_size"];
+                if (s.contains("enable_crash_inspection")) config.enable_crash_inspection = s["enable_crash_inspection"];
             }
 
             // ===== Protocols 配置 =====
@@ -309,7 +345,8 @@ int main(int argc, char* argv[]) {
             ("timeout", po::value<int>()->default_value(60000),
              "Probe timeout in milliseconds")
             ("batch-size", po::value<int>()->default_value(10000),
-             "Batch size for processing");
+             "Batch size for processing")
+            ("disable-crash-inspection", "Skip startup crash inspection even if checkpoint exists");
 
         po::variables_map vm;
         po::store(po::parse_command_line(argc, argv, options), vm);
@@ -412,6 +449,10 @@ int main(int argc, char* argv[]) {
         }
         if (has_cpu_threads) {
             config.cpu_thread_count = vm["cpu-threads"].as<int>();
+        }
+
+        if (vm.count("disable-crash-inspection")) {
+            config.enable_crash_inspection = false;
         }
 
         // 如果显式传递 --threads 且没有分别指定 io/cpu 线程，使用向后兼容逻辑
@@ -532,6 +573,9 @@ int main(int argc, char* argv[]) {
         }
 
         if (vm.count("scan")) {
+            // 若存在上次运行留下的进度文件，先记录一次启动诊断再恢复。
+            run_startup_inspection(domains_file, config);
+
             // 检查系统限制并自动调整配置
             check_system_limits(config);
             

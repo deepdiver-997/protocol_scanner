@@ -70,6 +70,11 @@ void SmtpProtocol::async_probe(
     ctx->result.port = port;
     ctx->start_time = std::chrono::steady_clock::now();
 
+    ctx->socket.open(tcp::v4());
+    asio::socket_base::reuse_address reuse_opt(true);
+    boost::system::error_code set_ec;
+    ctx->socket.set_option(reuse_opt, set_ec);
+
     // 超时处理
     ctx->timer.expires_after(timeout);
     ctx->timer.async_wait([ctx](const boost::system::error_code& ec) {

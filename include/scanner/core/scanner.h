@@ -67,6 +67,9 @@ struct ScannerConfig {
     bool output_to_console = false;
     std::string output_format = "required_format";       // 主输出格式
 
+    // Diagnostics / recovery
+    bool enable_crash_inspection = true; // When true, run startup inspection if checkpoint exists
+
     // Logging 配置
     std::string logging_level = "INFO";
     bool logging_console_enabled = false;
