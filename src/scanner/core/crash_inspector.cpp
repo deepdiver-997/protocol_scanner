@@ -40,8 +40,16 @@ std::string time_string_utc() {
 // Execute a shell command and capture its stdout, limiting output size.
 // Returns empty string on failure or timeout.
 std::string exec_command(const std::string& cmd, std::size_t max_output = 8192) {
-    // Redirect stderr to /dev/null to avoid noise; add timeout wrapper if available
-    std::string wrapped_cmd = "timeout 2s sh -c '" + cmd + "' 2>/dev/null";
+    // Use bash with timeout; redirect stderr to /dev/null to avoid noise
+    // Escape double quotes in cmd to avoid injection
+    std::string escaped_cmd = cmd;
+    size_t pos = 0;
+    while ((pos = escaped_cmd.find('"', pos)) != std::string::npos) {
+        escaped_cmd.replace(pos, 1, "\\\"");
+        pos += 2;
+    }
+    
+    std::string wrapped_cmd = "timeout 2s bash -c \"" + escaped_cmd + "\" 2>/dev/null";
     FILE* pipe = popen(wrapped_cmd.c_str(), "r");
     if (!pipe) {
         return "";
