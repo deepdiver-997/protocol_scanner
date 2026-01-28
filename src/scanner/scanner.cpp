@@ -482,8 +482,45 @@ void Scanner::scan_loop() {
         }
     };
 
+    // 【新优化】根据负载动态计算睡眠时间，避免固定 5ms 导致过多的 clock_nanosleep 调用
+    auto calculate_adaptive_sleep = [](int active_sessions, int idle_count, int quota_used, int total_sessions, bool has_targets) -> std::chrono::milliseconds {
+        // 策略：高负载 → 短睡眠（1-3ms），低负载 → 长睡眠（8-20ms）
+        
+        // 1. 活跃会话比率（0.0 - 1.0）
+        double active_ratio = total_sessions > 0 ? static_cast<double>(active_sessions) / total_sessions : 0.0;
+        
+        // 2. 基于活跃率和任务状态动态调整
+        int base_sleep_ms = 5;  // 默认基准
+        
+        if (active_ratio > 0.8 && has_targets) {
+            // 高负载：80%+ 活跃 session 且有待扫描任务
+            base_sleep_ms = 1;
+        } else if (active_ratio > 0.5 && has_targets) {
+            // 中高负载：50-80% 活跃
+            base_sleep_ms = 2;
+        } else if (active_ratio > 0.2) {
+            // 中负载：20-50% 活跃
+            base_sleep_ms = 5;
+        } else if (active_sessions > 0) {
+            // 低负载：还有活跃但很少
+            base_sleep_ms = 8;
+        } else {
+            // 极低负载：无活跃 session（等待新任务或即将结束）
+            base_sleep_ms = has_targets ? 10 : 15;
+        }
+        
+        // 3. quota_used 修正（如果 quota 很快用完，说明任务提交很饱和）
+        if (quota_used >= 50) {
+            base_sleep_ms = std::max(1, base_sleep_ms - 2);  // 高提交率，缩短睡眠
+        } else if (quota_used < 5) {
+            base_sleep_ms = std::min(20, base_sleep_ms + 5);  // 低提交率，延长睡眠
+        }
+        
+        return std::chrono::milliseconds(base_sleep_ms);
+    };
+
     while (true) {
-        bool should_stop = stop_.load();
+        // bool should_stop = stop_.load();
         
         // 每10秒记录一次内存状态（用于诊断内存占用问题）
         auto now = std::chrono::steady_clock::now();
@@ -513,6 +550,7 @@ void Scanner::scan_loop() {
         }
 
         int quota = estimate_quota();
+        int initial_quota = quota;  // 记录初始 quota 用于计算使用率
 
         auto fetch_target = [this](ScanTarget& out) -> bool {
             std::lock_guard<std::mutex> lock(targets_mutex_);
@@ -637,7 +675,23 @@ void Scanner::scan_loop() {
             break;
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        // 【优化】动态睡眠时间：根据负载自适应调整，避免固定 5ms 导致过多 clock_nanosleep 开销
+        int quota_used = initial_quota - quota;
+        bool has_targets = false;
+        {
+            std::lock_guard<std::mutex> lock(targets_mutex_);
+            has_targets = !targets_.empty();
+        }
+        
+        auto sleep_duration = calculate_adaptive_sleep(
+            active_sessions,
+            idle_count,
+            quota_used,
+            static_cast<int>(sessions_.size()),
+            has_targets
+        );
+        
+        std::this_thread::sleep_for(sleep_duration);
     }
 
     {
