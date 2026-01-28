@@ -1,10 +1,11 @@
 #include "scanner/protocols/smtp_protocol.h"
 #include "scanner/common/logger.h"
+#include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
-#include <boost/asio/read_until.hpp>
-#include <boost/asio/streambuf.hpp>
+#include <boost/asio/read.hpp>
 #include <sstream>
 #include <chrono>
+#include <cstring>
 
 namespace scanner {
 
@@ -21,14 +22,18 @@ struct ProbeContext {
     ProtocolResult result;
     tcp::socket socket;
     steady_timer timer;
-    asio::streambuf buffer;
+    BufferPool::BufferHandle buffer;
+    size_t bytes_read{0};
+    size_t buffer_offset{0};  // 当前已处理的偏移
     Timeout timeout;
     std::function<void(ProtocolResult&&)> on_complete;
     std::chrono::steady_clock::time_point start_time;
     bool completed{false};
 
     ProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
-        : socket(std::move(exec)), timer(socket.get_executor()), timeout(t), on_complete(std::move(cb)) {}
+        : socket(std::move(exec)), timer(socket.get_executor()),
+          buffer(get_global_buffer_pool().acquire()),
+          timeout(t), on_complete(std::move(cb)) {}
 
     void finish_success() {
         result.accessible = true;
@@ -95,52 +100,82 @@ void SmtpProtocol::async_probe(
     auto read_banner = std::make_shared<std::function<void()>>();
 
     *read_ehlo = [this, ctx, read_ehlo]() {
-        asio::async_read_until(
-            ctx->socket,
-            ctx->buffer,
-            "\r\n",
-            [this, ctx, read_ehlo](const boost::system::error_code& ec, std::size_t /*bytes*/) {
-                if (ec) {
-                    ctx->finish_error("Read EHLO failed: " + ec.message());
-                    return;
-                }
+        // 如果缓冲区已满，完成
+        if (ctx->buffer_offset >= ctx->bytes_read) {
+            // 需要继续读取
+            if (ctx->bytes_read >= ctx->buffer->size()) {
+                ctx->finish_success();  // 缓冲区已满，结束
+                return;
+            }
+            // 继续读取更多数据
+            ctx->socket.async_read_some(
+                asio::buffer(ctx->buffer->data() + ctx->bytes_read, 
+                           ctx->buffer->size() - ctx->bytes_read),
+                [ctx, read_ehlo](const boost::system::error_code& ec, std::size_t bytes) {
+                    if (ec) {
+                        if (ec == asio::error::eof) {
+                            ctx->finish_success();
+                        } else {
+                            ctx->finish_error("Read EHLO failed: " + ec.message());
+                        }
+                        return;
+                    }
+                    ctx->bytes_read += bytes;
+                    (*read_ehlo)();
+                });
+            return;
+        }
 
-                std::istream response_stream(&ctx->buffer);
-                std::string line;
-                if (!std::getline(response_stream, line)) {
-                    ctx->finish_error("EHLO parsing error");
-                    return;
-                }
+        // 从buffer_offset开始查找一行
+        auto* data = ctx->buffer->data() + ctx->buffer_offset;
+        size_t remaining = ctx->bytes_read - ctx->buffer_offset;
+        std::string_view sv(data, remaining);
+        auto pos = sv.find("\r\n");
+        
+        if (pos == std::string_view::npos) {
+            // 未找到完整行，继续读取
+            if (ctx->bytes_read >= ctx->buffer->size()) {
+                ctx->finish_success();  // 缓冲区已满
+            } else {
+                (*read_ehlo)();  // 递归继续
+            }
+            return;
+        }
 
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
+        std::string line(data, pos);
+        ctx->buffer_offset += pos + 2;  // 跳过 \r\n
+        parse_ehlo_line(line, ctx->result.attrs);
 
-                parse_ehlo_line(line, ctx->result.attrs);
+        if (line.find("250 ") == 0) {
+            ctx->finish_success();
+            return;
+        }
 
-                if (line.find("250 ") == 0) {
-                    ctx->finish_success();
-                    return;
-                }
-
-                (*read_ehlo)();
-            });
+        (*read_ehlo)();
     };
 
     *read_banner = [ctx, read_ehlo]() {
-        asio::async_read_until(
-            ctx->socket,
-            ctx->buffer,
-            "\r\n",
-            [ctx, read_ehlo](const boost::system::error_code& ec, std::size_t /*bytes*/) {
+        ctx->socket.async_read_some(
+            asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
+            [ctx, read_ehlo](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 if (ec) {
                     ctx->finish_error("Read banner failed: " + ec.message());
                     return;
                 }
 
-                std::istream response_stream(&ctx->buffer);
+                ctx->bytes_read = bytes_transferred;
+                auto* data = ctx->buffer->data();
+                std::string_view sv(data, bytes_transferred);
+                auto pos = sv.find("\r\n");
+                
                 std::string welcome;
-                std::getline(response_stream, welcome);
+                if (pos != std::string_view::npos) {
+                    welcome.assign(data, pos);
+                    ctx->buffer_offset = pos + 2;  // 记录已处理位置
+                } else {
+                    welcome.assign(data, bytes_transferred);
+                    ctx->buffer_offset = bytes_transferred;
+                }
 
                 if (welcome.find("220") != 0) {
                     ctx->finish_error("Invalid welcome: " + welcome);
@@ -157,6 +192,9 @@ void SmtpProtocol::async_probe(
                             ctx->finish_error("Write EHLO failed: " + write_ec.message());
                             return;
                         }
+                        // 重置偏移，准备读取EHLO响应
+                        ctx->buffer_offset = 0;
+                        ctx->bytes_read = 0;
                         (*read_ehlo)();
                     });
             });

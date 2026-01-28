@@ -161,6 +161,9 @@ private:
     // 主扫描循环
     void scan_loop();
 
+    // 输入线程函数
+    void input_thread_func(const std::string& source_path, bool has_checkpoint);
+
     ScannerConfig config_;
     std::vector<std::unique_ptr<IProtocol>> protocols_;
     std::unique_ptr<class IDnsResolver> dns_resolver_;

@@ -1,7 +1,8 @@
 #include "scanner/protocols/ssh_protocol.h"
 #include "scanner/common/logger.h"
-#include <boost/asio/read_until.hpp>
-#include <boost/asio/streambuf.hpp>
+#include "scanner/common/buffer_pool.h"
+#include <boost/asio/read.hpp>
+#include <cstring>
 
 namespace scanner {
 
@@ -13,14 +14,19 @@ struct SshProbeContext {
     ProtocolResult result;
     tcp::socket socket;
     steady_timer timer;
-    asio::streambuf buffer;
+    BufferPool::BufferHandle buffer;  // 使用内存池管理的固定缓冲区
+    size_t bytes_read{0};
     Timeout timeout;
     std::function<void(ProtocolResult&&)> on_complete;
     std::chrono::steady_clock::time_point start_time;
     bool completed{false};
 
     SshProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
-        : socket(std::move(exec)), timer(socket.get_executor()), timeout(t), on_complete(std::move(cb)) {}
+        : socket(std::move(exec)), 
+          timer(socket.get_executor()), 
+          buffer(get_global_buffer_pool().acquire()),  // 从池中获取缓冲区
+          timeout(t), 
+          on_complete(std::move(cb)) {}
 
     void finish_success() {
         result.accessible = true;
@@ -87,19 +93,36 @@ void SshProtocol::async_probe(
             return;
         }
 
-        // SSH 协议在建立 TCP 连接后会立即发送版本标识行，以 "\r\n" 结尾
-        asio::async_read_until(ctx->socket, ctx->buffer, "\n",
-            [ctx](const boost::system::error_code& ec, std::size_t /*bytes*/) {
+        // SSH 协议在建立 TCP 连接后会立即发送版本标识行，以 "\n" 结尾
+        // 使用固定缓冲区读取（最多 PROTOCOL_BUFFER_SIZE 字节）
+        ctx->socket.async_read_some(
+            asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
+            [ctx](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 if (ec) {
                     ctx->finish_error("Read SSH version failed: " + ec.message());
                     return;
                 }
-                std::string banner{
-                    asio::buffers_begin(ctx->buffer.data()),
-                    asio::buffers_end(ctx->buffer.data())
-                };
-                if (!banner.empty() && banner.back() == '\n') banner.pop_back();
-                if (!banner.empty() && banner.back() == '\r') banner.pop_back();
+                
+                ctx->bytes_read = bytes_transferred;
+                
+                // 查找换行符
+                auto* data = ctx->buffer->data();
+                auto* newline = static_cast<const char*>(std::memchr(data, '\n', bytes_transferred));
+                
+                std::string banner;
+                if (newline) {
+                    // 找到换行符，提取到换行符为止
+                    banner.assign(data, newline - data);
+                } else {
+                    // 未找到换行符，取全部数据
+                    banner.assign(data, bytes_transferred);
+                }
+                
+                // 移除尾部的 \r
+                if (!banner.empty() && banner.back() == '\r') {
+                    banner.pop_back();
+                }
+                
                 ctx->result.attrs.banner = banner;
                 ctx->finish_success();
             });

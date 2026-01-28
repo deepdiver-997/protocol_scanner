@@ -1,0 +1,77 @@
+{
+  "scanner": {
+    "io_thread_count": 4,
+    "cpu_thread_count": 1,
+    "thread_count": 8,
+    "batch_size": 200,
+    "dns_timeout_ms": 1000,
+    "probe_timeout_ms": 3000,
+    "retry_count": 1,
+    "only_success": true,
+    "max_work_count": 500,
+    "targets_max_size": 10000,
+    "result_queue_max_size": 1000
+  },
+  "protocols": {
+    "SMTP": {
+      "enabled": false,
+      "ports": [25, 465, 587, 2525],
+      "timeout_ms": 3000
+    },
+    "POP3": {
+      "enabled": false,
+      "ports": [110, 995],
+      "timeout_ms": 3000
+    },
+    "IMAP": {
+      "enabled": false,
+      "ports": [143, 993],
+      "timeout_ms": 3000
+    },
+    "HTTP": {
+      "enabled": false,
+      "ports": [80, 443, 8080],
+      "timeout_ms": 3000
+    },
+    "FTP": {
+      "enabled": true,
+      "ports": [21],
+      "timeout_ms": 3000
+    },
+    "SSH": {
+      "enabled": true,
+      "ports": [22],
+      "timeout_ms": 3000
+    },
+    "TELNET": {
+      "enabled": true,
+      "ports": [23],
+      "timeout_ms": 3000
+    }
+  },
+  "dns": {
+    "resolver_type": "cares",
+    "max_mx_records": 16,
+    "timeout_ms": 5000
+  },
+  "output": {
+    "format": ["required_format"],
+    "write_mode": "stream",
+    "directory": "./result",
+    "enable_json": true,
+    "enable_csv": true,
+    "enable_report": false,
+    "to_console": false
+  },
+  "logging": {
+    "level": "INFO",
+    "console_enabled": false,
+    "file_enabled": true,
+    "file_path": "./logs/scanner.log"
+  },
+  "vendor": {
+    "enabled": true,
+    "pattern_file": "./config/vendors.json",
+    "similarity_threshold": 0.7
+  }
+}

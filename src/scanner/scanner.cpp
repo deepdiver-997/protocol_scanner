@@ -2,6 +2,7 @@
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/io_thread_pool.h"
+#include "scanner/common/buffer_pool.h"
 #include "scanner/protocols/smtp_protocol.h"
 #include "scanner/protocols/pop3_protocol.h"
 #include "scanner/protocols/imap_protocol.h"
@@ -156,67 +157,70 @@ void Scanner::start(const std::string& source_path) {
     
     // 启动三个线程
     input_thread_ = std::thread([this, source_path, has_checkpoint]() {
-        try {
-            size_t loaded_count = 0;
-            
-            std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
-            bool skip_mode = !skip_until_ip.empty();
-            size_t skipped_count = 0;
-
-            auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str) -> bool {
-                if (stop_) return false;
-
-                // 跳过已处理的 IP
-                if (skip_mode) {
-                    if (is_valid_ip_address(target_str)) {
-                        if (target_str == skip_until_ip) {
-                            skip_mode = false;  // 找到了断点，从下一个开始处理
-                            LOG_CORE_INFO("Resumed from checkpoint: {}", skip_until_ip);
-                        } else {
-                            skipped_count++;
-                            return true;  // 跳过
-                        }
-                    }
-                }
-
-                std::unique_lock<std::mutex> lock(targets_mutex_);
-                targets_cv_.wait(lock, [this]() {
-                    return targets_.size() < config_.targets_max_size || stop_;
-                });
-
-                if (stop_) return false;
-
-                ScanTarget t;
-                if (is_valid_ip_address(target_str)) {
-                    t.domain = target_str;
-                    t.ip = target_str;
-                } else {
-                    t.domain = target_str;
-                }
-
-                targets_.push_back(std::move(t));
-                ++loaded_count;
-                return true;
-            };
-
-            // blocking call, will return after all targets are loaded
-            stream_domains(source_path, 0, enqueue_target);
-            
-            total_targets_ = loaded_count;
-
-            input_done_ = true;
-            LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {})", 
-                         loaded_count, total_targets_.load());
-        } catch (const std::exception& e) {
-            LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
-            input_done_ = true;
-        }
+        input_thread_func(source_path, has_checkpoint);
     });
-    
     scan_thread_ = std::thread([this]() { scan_loop(); });
     result_thread_ = std::thread([this]() { result_handler_thread(); });
     
     LOG_CORE_INFO("Scanner started with input source: {}", source_path);
+}
+
+void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
+    try {
+        size_t loaded_count = 0;
+        
+        std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
+        bool skip_mode = !skip_until_ip.empty();
+        size_t skipped_count = 0;
+
+        auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str) -> bool {
+            if (stop_) return false;
+
+            // 跳过已处理的 IP
+            if (skip_mode) {
+                if (is_valid_ip_address(target_str)) {
+                    if (target_str == skip_until_ip) {
+                        skip_mode = false;  // 找到了断点，从下一个开始处理
+                        LOG_CORE_INFO("Resumed from checkpoint: {}", skip_until_ip);
+                    } else {
+                        skipped_count++;
+                        return true;  // 跳过
+                    }
+                }
+            }
+
+            std::unique_lock<std::mutex> lock(targets_mutex_);
+            targets_cv_.wait(lock, [this]() {
+                return targets_.size() < config_.targets_max_size || stop_;
+            });
+
+            if (stop_) return false;
+
+            ScanTarget t;
+            if (is_valid_ip_address(target_str)) {
+                t.domain = target_str;
+                t.ip = target_str;
+            } else {
+                t.domain = target_str;
+            }
+
+            targets_.push_back(std::move(t));
+            ++loaded_count;
+            return true;
+        };
+
+        // blocking call, will return after all targets are loaded
+        stream_domains(source_path, 0, enqueue_target);
+        
+        total_targets_ = loaded_count;
+
+        input_done_ = true;
+        LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {})", 
+                     loaded_count, total_targets_.load());
+    } catch (const std::exception& e) {
+        LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
+        input_done_ = true;
+    }
 }
 
 void Scanner::result_handler_thread() {
@@ -423,6 +427,9 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
 
+    // 内存监控：记录容器大小以便诊断内存问题
+    auto last_mem_log = std::chrono::steady_clock::now();
+
     // 计算安全的任务配额：
     // - 每个 session 有 N 个协议探测（如 3 个：SSH, FTP, TELNET）
     // - 每个探测需要 1 个 socket (FD)
@@ -451,6 +458,33 @@ void Scanner::scan_loop() {
     };
 
     while (!stop_) {
+        // 每10秒记录一次内存状态（用于诊断内存占用问题）
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
+            size_t pending_sessions = 0;
+            for (auto& s : sessions_) {
+                if (s && s->tasks_completed() < s->tasks_total()) {
+                    pending_sessions++;
+                }
+            }
+            
+            // 获取内存池统计
+            auto pool_stats = get_global_buffer_pool().get_stats();
+            
+            LOG_CORE_INFO(
+                "[Memory] sessions_total={} sessions_pending={} targets_queue={} result_queue={} | "
+                "[BufferPool] size={} available={} hit_rate={:.2f}%",
+                sessions_.size(),
+                pending_sessions,
+                targets_.size(),
+                result_queue_.size(),
+                pool_stats.pool_size,
+                pool_stats.available,
+                pool_stats.hit_rate * 100.0
+            );
+            last_mem_log = now;
+        }
+
         int quota = estimate_quota();
 
         // 移除已完成的 session，并推送报告

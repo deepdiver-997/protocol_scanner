@@ -1,10 +1,11 @@
 #include "scanner/protocols/imap_protocol.h"
 #include "scanner/common/logger.h"
+#include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
-#include <boost/asio/read_until.hpp>
-#include <boost/asio/streambuf.hpp>
+#include <boost/asio/read.hpp>
 #include <sstream>
 #include <chrono>
+#include <cstring>
 
 namespace scanner {
 
@@ -20,7 +21,9 @@ struct ProbeContext {
     ProtocolResult result;
     tcp::socket socket;
     steady_timer timer;
-    asio::streambuf buffer;
+    BufferPool::BufferHandle buffer;
+    size_t bytes_read{0};
+    size_t buffer_offset{0};
     Timeout timeout;
     std::function<void(ProtocolResult&&)> on_complete;
     std::chrono::steady_clock::time_point start_time;
@@ -28,7 +31,9 @@ struct ProbeContext {
     bool completed{false};
 
     ProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
-        : socket(std::move(exec)), timer(socket.get_executor()), timeout(t), on_complete(std::move(cb)),
+        : socket(std::move(exec)), timer(socket.get_executor()),
+          buffer(get_global_buffer_pool().acquire()),
+          timeout(t), on_complete(std::move(cb)),
           tag("A001") {}
 
     void finish_success() {
@@ -95,62 +100,81 @@ void ImapProtocol::async_probe(
     auto read_greeting = std::make_shared<std::function<void()>>();
 
     *read_capability = [ctx, read_capability]() {
-        asio::async_read_until(
-            ctx->socket,
-            ctx->buffer,
-            "\r\n",
-            [ctx, read_capability](const boost::system::error_code& ec, std::size_t /*bytes*/) {
-                if (ec) {
-                    ctx->finish_error("Read capability failed: " + ec.message());
-                    return;
-                }
-
-                std::istream response_stream(&ctx->buffer);
-                std::string line;
-                if (!std::getline(response_stream, line)) {
-                    ctx->finish_error("Capability parsing error");
-                    return;
-                }
-
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
-                }
-
-                // Parse capabilities
-                if (line.find(ctx->tag) != std::string::npos) {
-                    if (line.find("OK") != std::string::npos) {
-                        ctx->finish_success();
-                        return;
-                    } else {
-                        ctx->finish_error("CAPABILITY failed: " + line);
+        if (ctx->buffer_offset >= ctx->bytes_read) {
+            if (ctx->bytes_read >= ctx->buffer->size()) {
+                ctx->finish_success();
+                return;
+            }
+            ctx->socket.async_read_some(
+                asio::buffer(ctx->buffer->data() + ctx->bytes_read,
+                           ctx->buffer->size() - ctx->bytes_read),
+                [ctx, read_capability](const boost::system::error_code& ec, std::size_t bytes) {
+                    if (ec) {
+                        if (ec == asio::error::eof) {
+                            ctx->finish_success();
+                        } else {
+                            ctx->finish_error("Read capability failed: " + ec.message());
+                        }
                         return;
                     }
-                }
+                    ctx->bytes_read += bytes;
+                    (*read_capability)();
+                });
+            return;
+        }
 
+        auto* data = ctx->buffer->data() + ctx->buffer_offset;
+        size_t remaining = ctx->bytes_read - ctx->buffer_offset;
+        std::string_view sv(data, remaining);
+        auto pos = sv.find("\r\n");
+        
+        if (pos == std::string_view::npos) {
+            if (ctx->bytes_read >= ctx->buffer->size()) {
+                ctx->finish_success();
+            } else {
                 (*read_capability)();
-            });
+            }
+            return;
+        }
+
+        std::string line(data, pos);
+        ctx->buffer_offset += pos + 2;
+
+        // Parse capabilities
+        if (line.find(ctx->tag) != std::string::npos) {
+            if (line.find("OK") != std::string::npos) {
+                ctx->finish_success();
+                return;
+            } else {
+                ctx->finish_error("CAPABILITY failed: " + line);
+                return;
+            }
+        }
+
+        (*read_capability)();
     };
 
     *read_greeting = [ctx, read_capability]() {
-        asio::async_read_until(
-            ctx->socket,
-            ctx->buffer,
-            "\r\n",
-            [ctx, read_capability](const boost::system::error_code& ec, std::size_t /*bytes*/) {
+        ctx->socket.async_read_some(
+            asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
+            [ctx, read_capability](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 if (ec) {
                     ctx->finish_error("Read greeting failed: " + ec.message());
                     return;
                 }
 
-                std::istream response_stream(&ctx->buffer);
+                ctx->bytes_read = bytes_transferred;
+                auto* data = ctx->buffer->data();
+                std::string_view sv(data, bytes_transferred);
+                auto pos = sv.find("\r\n");
+                
                 std::string line;
-                if (!std::getline(response_stream, line)) {
-                    ctx->finish_error("Greeting parsing error");
-                    return;
-                }
-
-                if (!line.empty() && line.back() == '\r') {
-                    line.pop_back();
+                if (pos != std::string_view::npos) {
+                    line.assign(data, pos);
+                    ctx->buffer_offset = pos + 2;
+                } else {
+                    line.assign(data, bytes_transferred);
+                    ctx->buffer_offset = bytes_transferred;
                 }
 
                 if (line.find("* OK") == 0 || line.find("* PREAUTH") == 0) {
@@ -165,6 +189,8 @@ void ImapProtocol::async_probe(
                                 ctx->finish_error("Write CAPABILITY failed: " + write_ec.message());
                                 return;
                             }
+                            ctx->buffer_offset = 0;
+                            ctx->bytes_read = 0;
                             (*read_capability)();
                         });
                 } else {
