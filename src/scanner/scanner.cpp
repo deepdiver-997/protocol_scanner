@@ -520,11 +520,11 @@ void Scanner::scan_loop() {
     };
 
     while (true) {
-        // bool should_stop = stop_.load();
+        // 【优化】在循环开头一次性获取当前时间，避免多次系统调用
+        auto loop_now = std::chrono::steady_clock::now();
         
         // 每10秒记录一次内存状态（用于诊断内存占用问题）
-        auto now = std::chrono::steady_clock::now();
-        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
+        if (std::chrono::duration_cast<std::chrono::seconds>(loop_now - last_mem_log).count() >= 10) {
             size_t pending_sessions = 0;
             for (auto& s : sessions_) {
                 if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
@@ -546,7 +546,7 @@ void Scanner::scan_loop() {
                 pool_stats.available,
                 pool_stats.hit_rate * 100.0
             );
-            last_mem_log = now;
+            last_mem_log = loop_now;
         }
 
         int quota = estimate_quota();
@@ -600,7 +600,7 @@ void Scanner::scan_loop() {
                     int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
                 } else {
-                    s->mark_idle();
+                    // 【优化】mark_idle 无需调用，is_idle 由 tasks_total == 0 隐含表示
                     idle_count++;
                     active_sessions--;
                 }
@@ -650,22 +650,12 @@ void Scanner::scan_loop() {
                 int started = idle_session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                 quota -= started;
             } else {
-                // 创建新 session
-                auto sess = std::make_unique<ScanSession>(
-                    t,
-                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                    config_.dns_timeout,
-                    config_.probe_timeout,
-                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                    protocols_
-                );
-                sess->set_only_success(config_.only_success);
-
-                // 【优化】批量启动
-                int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
-                quota -= started;
-
-                sessions_.push_back(std::move(sess));
+                // 【优化】没有空闲 session，直接 break 等待复用
+                // 预分配了足够的 session，不需要再创建新的
+                // 这样保证了 sessions_ 的大小受控
+                std::lock_guard<std::mutex> lock(targets_mutex_);
+                targets_.push_back(std::move(t));
+                break;
             }
         }
 
@@ -801,7 +791,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
                     );
                     s->set_only_success(config_.only_success);
                 } else {
-                    s->mark_idle();
+                    // 【优化】mark_idle 无需调用
                 }
             }
         }

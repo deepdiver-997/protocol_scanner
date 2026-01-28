@@ -24,22 +24,22 @@ ScanSession::ScanSession(
 
 void ScanSession::set_new_target(const ScanTarget& new_target) {
     target_ = new_target;
-    idle_.store(false, std::memory_order_relaxed);
+    // 【优化】移除 idle_ 原子操作
 }
 
 void ScanSession::set_new_target(ScanTarget&& new_target) {
     target_ = std::move(new_target);
-    idle_.store(false, std::memory_order_relaxed);
+    // 【优化】移除 idle_ 原子操作
 }
 
 void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols) {
     target_ = new_target;
     error_msg_.clear();
     dns_result_ = DnsResult{};
-    state_.store(State::PENDING, std::memory_order_relaxed);
+    // 【优化】移除 state_ 原子操作（不再维护状态机）
     tasks_total_.store(0, std::memory_order_relaxed);
     tasks_completed_.store(0, std::memory_order_relaxed);
-    idle_.store(false, std::memory_order_relaxed);
+    // 【优化】移除 idle_ 原子操作
     available_ports_.clear();
 
     // 解析域名 -> IP
@@ -70,7 +70,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
         
         if (target_.ip.empty()) {
             LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
-            set_state(State::PENDING, State::FAILED);
+            // 【优化】移除 set_state 调用
             set_error("DNS Resolution Failed");
         }
     } else {
@@ -115,10 +115,10 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
     target_ = std::move(new_target);
     error_msg_.clear();
     dns_result_ = DnsResult{};
-    state_.store(State::PENDING, std::memory_order_relaxed);
+    // 【优化】移除 state_ 原子操作
     tasks_total_.store(0, std::memory_order_relaxed);
     tasks_completed_.store(0, std::memory_order_relaxed);
-    idle_.store(false, std::memory_order_relaxed);
+    // 【优化】移除 idle_ 原子操作
     available_ports_.clear();
 
     // 解析域名 -> IP
@@ -149,7 +149,7 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
         
         if (target_.ip.empty()) {
             LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
-            set_state(State::PENDING, State::FAILED);
+            // 【优化】移除 set_state 调用
             set_error("DNS Resolution Failed");
         }
     } else {
@@ -188,10 +188,6 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
         }
     }
     set_expected_tasks(total_tasks);
-}
-
-void ScanSession::mark_idle() {
-    idle_.store(true, std::memory_order_relaxed);
 }
 
 bool ScanSession::start_one_probe(
@@ -361,6 +357,8 @@ int ScanSession::start_all_pending_probes(
     return launched;
 }
 
+// 【优化】移除 set_state 和 is_completed，不再需要状态机
+/*
 bool ScanSession::set_state(State from, State to) {
     State expected = from;
     return state_.compare_exchange_strong(expected, to);
@@ -370,6 +368,7 @@ bool ScanSession::is_completed() const {
     auto s = state_.load();
     return s == State::COMPLETED || s == State::TIMEOUT || s == State::FAILED;
 }
+*/
 
 void ScanSession::notify_complete() {
     if (on_complete_) {

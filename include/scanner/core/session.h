@@ -88,7 +88,7 @@ public:
     const std::string& domain() const { return target_.domain; }
     const ScanTarget& target() const { return target_; }
     size_t source_offset() const { return target_.source_offset; }
-    State state() const { return state_.load(); }
+    // State state() const { return state_.load(); }
     
     const DnsResult& dns_result() const { return dns_result_; }
     DnsResult& dns_result() { return dns_result_; }
@@ -101,8 +101,11 @@ public:
     void set_new_target(ScanTarget&& new_target);
     void reset(const ScanTarget& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols);
     void reset(ScanTarget&& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols);
-    bool is_idle() const { return idle_.load(std::memory_order_relaxed); }
-    void mark_idle();
+    
+    // 【优化】移除原子变量 idle_，直接通过 tasks_total 判断：
+    // idle = tasks_total == 0（从未分配过任务）
+    bool is_idle() const { return tasks_total_.load(std::memory_order_relaxed) == 0; }
+    // mark_idle() 无需操作 - 优化后移除
 
     // 启动一次探测任务；返回是否成功启动
     bool start_one_probe(
@@ -153,7 +156,8 @@ private:
     Timeout probe_timeout_;
     DnsResult dns_result_;
     std::string error_msg_;
-    std::atomic<State> state_{State::PENDING};
+    // 【优化】移除 std::atomic<State> state_，不再维护状态机
+    // 现在仅通过 tasks_completed/tasks_total 判断进度
     Callback on_complete_;
 
     // 端口策略与映射
@@ -166,11 +170,9 @@ private:
     // 每协议探测结果队列（线程安全，用于避免 if-else 分发）
     std::unordered_map<std::string, std::shared_ptr<TaskQueue<ProtocolResult>>> protocol_result_queues_;
 
-    // 任务计数
+    // 任务计数（保持原子以支持并发访问）
     std::atomic<std::size_t> tasks_total_{0};
     std::atomic<std::size_t> tasks_completed_{0};
-
-    std::atomic<bool> idle_{false};
 
     // 过滤策略
     bool only_success_{false};
