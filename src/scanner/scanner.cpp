@@ -525,9 +525,23 @@ void Scanner::scan_loop() {
             return true;
         };
 
-        // 复用已完成的 session，并推送报告
+        // 单次遍历：复用已完成 + 分配任务 + 统计状态
+        // 将原来的 4 次遍历合并为 1 次，减少缓存失效和循环开销
+        int active_sessions = 0;
+        int idle_count = 0;
+        
         for (auto& s : sessions_) {
-            if (!s || s->is_idle()) continue;
+            if (!s) continue;
+            
+            bool is_idle = s->is_idle();
+            if (is_idle) {
+                idle_count++;
+                continue;
+            }
+            
+            active_sessions++;
+            
+            // 1️⃣ 检查是否完成，复用已完成的 session
             if (s->ready_to_release()) {
                 ScanReport rep;
                 rep.target = s->target();
@@ -544,45 +558,45 @@ void Scanner::scan_loop() {
                         protocols_
                     );
                     s->set_only_success(config_.only_success);
+                    // 【优化】一次性批量启动所有待扫协议，而不是多次循环
+                    int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                    quota -= started;
                 } else {
                     s->mark_idle();
+                    idle_count++;
+                    active_sessions--;
                 }
+            } else {
+                // 2️⃣ 为现有活跃 session 分配新任务【优化】批量启动所有待扫协议
+                int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                quota -= started;
             }
-        }
-
-        // 先给现有 session 分配任务
-        for (auto& s : sessions_) {
-            if (!s) continue;
-            while (quota > 0 && s->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
-                --quota;
-            }
+            
             if (quota == 0) break;
         }
 
-        // 创建新 session 并分配任务
-        while (quota > 0) {
-            // 检查最大并发会话数（如果有配置）
-            if (config_.max_work_count > 0) {
-                int active_sessions = 0;
-                for (const auto& s : sessions_) {
-                    if (s && !s->is_idle()) {
-                        ++active_sessions;
-                    }
-                }
-                if (active_sessions >= static_cast<int>(config_.max_work_count)) {
-                    break;
-                }
-            }
-
+        // 如果还有配额，查找 idle session 进行复用或创建新的
+        while (quota > 0 && idle_count > 0) {
             ScanTarget t;
             if (!fetch_target(t)) {
                 break;
             }
 
+            // 检查最大并发会话数
+            if (config_.max_work_count > 0 && active_sessions >= static_cast<int>(config_.max_work_count)) {
+                // 放回这个 target，不创建新会话
+                std::lock_guard<std::mutex> lock(targets_mutex_);
+                targets_.push_back(std::move(t));
+                break;
+            }
+
+            // 查找 idle session 进行复用
             ScanSession* idle_session = nullptr;
             for (auto& s : sessions_) {
                 if (s && s->is_idle()) {
                     idle_session = s.get();
+                    idle_count--;
+                    active_sessions++;
                     break;
                 }
             }
@@ -594,11 +608,11 @@ void Scanner::scan_loop() {
                     protocols_
                 );
                 idle_session->set_only_success(config_.only_success);
-
-                while (quota > 0 && idle_session->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
-                    --quota;
-                }
+                // 【优化】批量启动
+                int started = idle_session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                quota -= started;
             } else {
+                // 创建新 session
                 auto sess = std::make_unique<ScanSession>(
                     t,
                     dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
@@ -609,28 +623,16 @@ void Scanner::scan_loop() {
                 );
                 sess->set_only_success(config_.only_success);
 
-                while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
-                    --quota;
-                }
+                // 【优化】批量启动
+                int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                quota -= started;
 
                 sessions_.push_back(std::move(sess));
             }
         }
 
-        // 检查是否完成
-        bool has_pending = false;
-        bool has_active = false;
-        for (auto& s : sessions_) {
-            if (s && !s->is_idle()) {
-                has_active = true;
-            }
-            if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
-                has_pending = true;
-                break;
-            }
-        }
-        
-        bool all_done = input_done_ && targets_.empty() && !has_active && !has_pending;
+        // 检查是否完成（使用前面计算的统计信息）
+        bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
         if (all_done) {
             break;
         }

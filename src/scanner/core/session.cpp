@@ -274,6 +274,93 @@ bool ScanSession::start_one_probe(
     return true;
 }
 
+int ScanSession::start_all_pending_probes(
+    const std::vector<std::unique_ptr<IProtocol>>& protocols,
+    ThreadPool& scan_pool,
+    const boost::asio::any_io_executor& exec,
+    Timeout timeout,
+    int quota
+) {
+    // 【优化】批量启动所有待扫描协议任务
+    // 这样可以减少 start_one_probe 的调用频率（从 7 次/session → 1 次）
+    // 从而降低 scan_loop 中的遍历和 start_one_probe 的 CPU 热点
+    
+    if (target_.ip.empty() || quota <= 0) {
+        return 0;
+    }
+
+    int launched = 0;
+    while (launched < quota) {
+        // 找到第一个有待扫端口的协议
+        std::string chosen_proto;
+        Port chosen_port = 0;
+        for (auto& kv : protocol_port_queues_) {
+            if (!kv.second.empty()) {
+                chosen_proto = kv.first;
+                chosen_port = kv.second.front();
+                kv.second.pop();
+                break;
+            }
+        }
+
+        if (chosen_proto.empty()) {
+            break; // 无更多待任务
+        }
+
+        // 定位协议实例
+        IProtocol* proto_ptr = nullptr;
+        for (const auto& p : protocols) {
+            if (p && p->name() == chosen_proto) {
+                proto_ptr = p.get();
+                break;
+            }
+        }
+        if (!proto_ptr) {
+            LOG_CORE_WARN("Protocol instance not found for {}", chosen_proto);
+            break;
+        }
+
+        // 计算有效超时
+        Timeout effective_timeout = timeout;
+        if (effective_timeout.count() == 0) {
+            effective_timeout = LatencyManager::instance().get_timeout(target_.ip);
+        }
+        Timeout proto_default = proto_ptr->default_timeout();
+        if (proto_default > effective_timeout) {
+            effective_timeout = proto_default;
+        }
+
+        // 提交任务到扫描线程池
+        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
+            const std::string& target = target_.domain.empty() ? target_.ip : target_.domain;
+            
+            proto_ptr->async_probe(
+                target,
+                target_.ip,
+                port,
+                timeout,
+                exec,
+                [this, proto_name = proto_ptr->name()](ProtocolResult&& r) {
+                    if (!r.accessible && !r.error.empty()) {
+                        static int err_log_count = 0;
+                        if (err_log_count++ < 10) {
+                            LOG_CORE_WARN("Probe failed for {} {}: {}", target_.ip, proto_name, r.error);
+                        }
+                    }
+                    push_result(std::move(r));
+                    if (ready_to_release()) {
+                        notify_complete();
+                    }
+                }
+            );
+        });
+
+        ++launched;
+    }
+
+    return launched;
+}
+
 bool ScanSession::set_state(State from, State to) {
     State expected = from;
     return state_.compare_exchange_strong(expected, to);

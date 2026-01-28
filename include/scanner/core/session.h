@@ -112,6 +112,17 @@ public:
         Timeout timeout
     );
 
+    // 【新优化】批量启动所有待扫描协议探测；返回实际启动的任务数
+    // 在一次 scan_loop 迭代中提交该 session 的全部（或 quota 限制的）协议任务
+    // 这样可以显著减少 start_one_probe 的调用频率和 session 遍历次数
+    int start_all_pending_probes(
+        const std::vector<std::unique_ptr<IProtocol>>& protocols,
+        ThreadPool& scan_pool,
+        const boost::asio::any_io_executor& exec,
+        Timeout timeout,
+        int quota = INT_MAX  // 最多启动的任务数；-1 表示无限制
+    );
+
     // ====== 状态转换 ======
     bool set_state(State from, State to);
     bool is_completed() const;
