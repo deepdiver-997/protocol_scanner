@@ -227,6 +227,13 @@ size_t stream_domains(
     const std::function<bool(const std::string&)>& handle_target
 );
 
+// 以流式方式处理域名列表（带输入文件偏移），回调返回 false 时提前终止
+size_t stream_domains_with_offset(
+    const std::string& path,
+    size_t file_offset,
+    const std::function<bool(const std::string&, size_t)>& handle_target
+);
+
 // 检查是否是有效的 IP 地址
 bool is_valid_ip_address(const std::string& s);
 

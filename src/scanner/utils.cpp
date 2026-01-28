@@ -185,6 +185,91 @@ static size_t process_file_stream(
     return emitted;
 }
 
+// 将单个文件流式解析为目标并交给处理器（按文件字节偏移定位）
+static size_t process_file_stream_with_offset(
+    const std::string& filename,
+    size_t file_offset,
+    const std::function<bool(const std::string&, size_t)>& handle_target,
+    bool& aborted
+) {
+    std::ifstream in(filename);
+    if (!in) {
+        LOG_FILE_IO_ERROR("Failed to open file: {}", filename);
+        return 0;
+    }
+
+    if (file_offset > 0) {
+        in.seekg(static_cast<std::streamoff>(file_offset), std::ios::beg);
+        if (!in) {
+            LOG_CORE_WARN("Failed to seek to offset {} in {}, fallback to start", file_offset, filename);
+            in.clear();
+            in.seekg(0, std::ios::beg);
+            file_offset = 0;
+        } else {
+            // 如果不是行起始位置，则跳过当前残缺行
+            in.seekg(static_cast<std::streamoff>(file_offset - 1), std::ios::beg);
+            char prev = '\n';
+            in.get(prev);
+            if (prev != '\n' && prev != '\r') {
+                std::string discard;
+                std::getline(in, discard);
+            }
+        }
+    }
+
+    size_t emitted = 0;
+    std::string line;
+    while (true) {
+        std::streampos line_pos = in.tellg();
+        if (!std::getline(in, line)) break;
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+
+        size_t line_offset = 0;
+        if (line_pos != std::streampos(-1)) {
+            line_offset = static_cast<size_t>(line_pos);
+        }
+
+        // 检查是否为 CIDR 记号（IP/PREFIX）
+        if (line.find('/') != std::string::npos) {
+            auto ips = expand_cidr(line);
+            for (const auto& ip : ips) {
+                if (!handle_target(ip, line_offset)) {
+                    aborted = true;
+                    return emitted;
+                }
+                ++emitted;
+            }
+            continue;
+        }
+
+        // 尝试判断是否为 IP 段 CSV (start_ip,end_ip,...)
+        if (line.find(',') != std::string::npos) {
+            std::stringstream ss(line);
+            std::string start_ip, end_ip;
+            if (std::getline(ss, start_ip, ',') && std::getline(ss, end_ip, ',')) {
+                auto ips = expand_ip_range(start_ip, end_ip);
+                for (const auto& ip : ips) {
+                    if (!handle_target(ip, line_offset)) {
+                        aborted = true;
+                        return emitted;
+                    }
+                    ++emitted;
+                }
+                continue;
+            }
+        }
+
+        if (!handle_target(line, line_offset)) {
+            aborted = true;
+            return emitted;
+        }
+        ++emitted;
+    }
+
+    return emitted;
+}
+
 size_t stream_domains(
     const std::string& path,
     size_t offset,
@@ -204,6 +289,38 @@ size_t stream_domains(
             }
         } else if (fs::is_regular_file(path)) {
             total = process_file_stream(path, offset, skipped, handle_target, aborted);
+        } else {
+            LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
+        }
+    } catch (const std::exception& e) {
+        LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
+    }
+
+    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    return total;
+}
+
+size_t stream_domains_with_offset(
+    const std::string& path,
+    size_t file_offset,
+    const std::function<bool(const std::string&, size_t)>& handle_target
+) {
+    size_t total = 0;
+    bool aborted = false;
+
+    try {
+        if (fs::is_directory(path)) {
+            if (file_offset > 0) {
+                LOG_CORE_WARN("Input path is directory; file_offset={} ignored", file_offset);
+            }
+            LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
+            for (const auto& entry : fs::recursive_directory_iterator(path)) {
+                if (!entry.is_regular_file()) continue;
+                total += process_file_stream_with_offset(entry.path().string(), 0, handle_target, aborted);
+                if (aborted) break;
+            }
+        } else if (fs::is_regular_file(path)) {
+            total = process_file_stream_with_offset(path, file_offset, handle_target, aborted);
         } else {
             LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
         }

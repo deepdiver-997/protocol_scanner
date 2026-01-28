@@ -61,3 +61,4 @@ server-results/
 tests/output/**
 *ip*
 !get_country_ips.sh
+Launch*

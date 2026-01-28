@@ -19,6 +19,29 @@ ScanSession::ScanSession(
       dns_resolver_(std::move(resolver)),
       dns_timeout_(dns_timeout),
       probe_timeout_(probe_timeout) {
+    reset(target, mode, protocols);
+}
+
+void ScanSession::set_new_target(const ScanTarget& new_target) {
+    target_ = new_target;
+    idle_.store(false, std::memory_order_relaxed);
+}
+
+void ScanSession::set_new_target(ScanTarget&& new_target) {
+    target_ = std::move(new_target);
+    idle_.store(false, std::memory_order_relaxed);
+}
+
+void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols) {
+    target_ = new_target;
+    error_msg_.clear();
+    dns_result_ = DnsResult{};
+    state_.store(State::PENDING, std::memory_order_relaxed);
+    tasks_total_.store(0, std::memory_order_relaxed);
+    tasks_completed_.store(0, std::memory_order_relaxed);
+    idle_.store(false, std::memory_order_relaxed);
+    available_ports_.clear();
+
     // 解析域名 -> IP
     if (!target_.ip.empty()) {
         // 已经有IP，直接使用
@@ -86,6 +109,89 @@ ScanSession::ScanSession(
         }
     }
     set_expected_tasks(total_tasks);
+}
+
+void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols) {
+    target_ = std::move(new_target);
+    error_msg_.clear();
+    dns_result_ = DnsResult{};
+    state_.store(State::PENDING, std::memory_order_relaxed);
+    tasks_total_.store(0, std::memory_order_relaxed);
+    tasks_completed_.store(0, std::memory_order_relaxed);
+    idle_.store(false, std::memory_order_relaxed);
+    available_ports_.clear();
+
+    // 解析域名 -> IP
+    if (!target_.ip.empty()) {
+        // 已经有IP，直接使用
+        dns_result_.domain = target_.domain;
+        dns_result_.ip = target_.ip;
+        dns_result_.success = true;
+        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, target_.ip);
+    } else if (!target_.domain.empty() && dns_resolver_) {
+        // 没有IP，需要DNS解析
+        int max_retries = 2; // 默认尝试 2 次
+        for (int i = 0; i <= max_retries; ++i) {
+            DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
+            dns_result_ = dr;
+            if (dr.success && !dr.ip.empty()) {
+                target_.ip = dr.ip;
+                break;
+            } else if (!dr.ip.empty()) {
+                target_.ip = dr.ip;
+                break;
+            }
+            if (i < max_retries) {
+                LOG_DNS_WARN("DNS resolution failed for {}, retrying ({}/{})...", 
+                            target_.domain, i + 1, max_retries);
+            }
+        }
+        
+        if (target_.ip.empty()) {
+            LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
+            set_state(State::PENDING, State::FAILED);
+            set_error("DNS Resolution Failed");
+        }
+    } else {
+        // 既没有IP也没有有效的域名
+        dns_result_.domain = target_.domain;
+        dns_result_.ip = target_.ip;
+        dns_result_.success = false;
+    }
+
+    probe_mode_ = mode;
+
+    // 构建 available_ports_（占位：默认使用协议默认端口并集；全扫描未实现时也使用默认端口）
+    for (const auto& p : protocols) {
+        if (!p) continue;
+        for (auto d : p->default_ports()) {
+            if (std::find(available_ports_.begin(), available_ports_.end(), d) == available_ports_.end()) {
+                available_ports_.push_back(d);
+            }
+        }
+    }
+
+    init_protocol_queues(protocols);
+
+    // 预估任务总数
+    std::size_t total_tasks = 0;
+    for (const auto& p : protocols) {
+        if (!p) continue;
+        if (probe_mode_ == ProbeMode::ProtocolDefaults) {
+            for (auto d : p->default_ports()) {
+                if (should_probe(*p, d)) total_tasks++;
+            }
+        } else {
+            for (auto ap : available_ports_) {
+                if (should_probe(*p, ap)) total_tasks++;
+            }
+        }
+    }
+    set_expected_tasks(total_tasks);
+}
+
+void ScanSession::mark_idle() {
+    idle_.store(true, std::memory_order_relaxed);
 }
 
 bool ScanSession::start_one_probe(

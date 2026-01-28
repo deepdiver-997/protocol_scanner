@@ -86,6 +86,8 @@ public:
 
     // ====== 访问器 ======
     const std::string& domain() const { return target_.domain; }
+    const ScanTarget& target() const { return target_; }
+    size_t source_offset() const { return target_.source_offset; }
     State state() const { return state_.load(); }
     
     const DnsResult& dns_result() const { return dns_result_; }
@@ -95,6 +97,12 @@ public:
 
     std::string error_msg() const { return error_msg_; }
     void set_error(const std::string& msg) { error_msg_ = msg; }
+    void set_new_target(const ScanTarget& new_target);
+    void set_new_target(ScanTarget&& new_target);
+    void reset(const ScanTarget& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols);
+    void reset(ScanTarget&& new_target, ProbeMode mode, const std::vector<std::unique_ptr<IProtocol>>& protocols);
+    bool is_idle() const { return idle_.load(std::memory_order_relaxed); }
+    void mark_idle();
 
     // 启动一次探测任务；返回是否成功启动
     bool start_one_probe(
@@ -150,6 +158,8 @@ private:
     // 任务计数
     std::atomic<std::size_t> tasks_total_{0};
     std::atomic<std::size_t> tasks_completed_{0};
+
+    std::atomic<bool> idle_{false};
 
     // 过滤策略
     bool only_success_{false};

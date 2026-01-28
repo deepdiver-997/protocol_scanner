@@ -88,6 +88,7 @@ struct ScanTarget {
     std::string ip;            // IP 地址
     std::vector<std::string> mx_records; // MX 记录
     int priority = 0;          // 优先级
+    size_t source_offset = 0;  // 输入文件行起始偏移（用于断点恢复加速）
 };
 
 // 扫描报告

@@ -61,6 +61,7 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
         j["successful_count"] = info.successful_count;
         j["timestamp"] = info.timestamp;
         j["input_file_hash"] = info.input_file_hash;
+        j["input_file_offset"] = info.input_file_offset;
         
         std::ofstream ofs(checkpoint_file_);
         if (!ofs) {
@@ -104,6 +105,7 @@ bool ProgressManager::load_checkpoint(CheckpointInfo& info) {
         info.successful_count = j.value("successful_count", 0);
         info.timestamp = j.value("timestamp", "");
         info.input_file_hash = j.value("input_file_hash", "");
+        info.input_file_offset = j.value("input_file_offset", 0);
         last_loaded_processed_count_ = info.processed_count;
         
         LOG_CORE_INFO("Checkpoint loaded: {} (processed: {}, successful: {})", 
@@ -112,7 +114,8 @@ bool ProgressManager::load_checkpoint(CheckpointInfo& info) {
         std::cout << "[checkpoint] loaded file=" << checkpoint_file_ 
               << " last_ip=" << info.last_ip
               << " processed=" << info.processed_count
-              << " successful=" << info.successful_count << std::endl;
+              << " successful=" << info.successful_count
+              << " file_offset=" << info.input_file_offset << std::endl;
         return true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to load checkpoint: {}", e.what());

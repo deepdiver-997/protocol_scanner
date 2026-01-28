@@ -168,12 +168,13 @@ void Scanner::start(const std::string& source_path) {
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
     try {
         size_t loaded_count = 0;
-        
+        size_t input_offset = has_checkpoint ? checkpoint_info_.input_file_offset : 0;
+
         std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
         bool skip_mode = !skip_until_ip.empty();
         size_t skipped_count = 0;
 
-        auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str) -> bool {
+        auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str, size_t source_offset) -> bool {
             if (stop_) return false;
 
             // 跳过已处理的 IP
@@ -203,6 +204,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             } else {
                 t.domain = target_str;
             }
+            t.source_offset = source_offset;
 
             targets_.push_back(std::move(t));
             ++loaded_count;
@@ -210,7 +212,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         };
 
         // blocking call, will return after all targets are loaded
-        stream_domains(source_path, 0, enqueue_target);
+        stream_domains_with_offset(source_path, input_offset, enqueue_target);
         
         total_targets_ = loaded_count;
 
@@ -262,6 +264,7 @@ void Scanner::result_handler_thread() {
 
             processed_count_++;
             last_processed_ip = !r.target.ip.empty() ? r.target.ip : r.target.domain;
+            checkpoint_info_.input_file_offset = r.target.source_offset;
         }
 
         // 保存进度（checkpoint）
@@ -442,7 +445,12 @@ void Scanner::scan_loop() {
         if (max_concurrent <= 0) max_concurrent = 1000; // 默认上限
         
         // 留出余量给已经在进行中的连接
-        int active_sessions = static_cast<int>(sessions_.size());
+        int active_sessions = 0;
+        for (const auto& s : sessions_) {
+            if (s && !s->is_idle()) {
+                ++active_sessions;
+            }
+        }
         int available_slots = max_concurrent - active_sessions;
         
         // 每轮最多启动 batch_size 个新任务，但不能超过可用槽位
@@ -463,7 +471,7 @@ void Scanner::scan_loop() {
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
             size_t pending_sessions = 0;
             for (auto& s : sessions_) {
-                if (s && s->tasks_completed() < s->tasks_total()) {
+                if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
                     pending_sessions++;
                 }
             }
@@ -487,26 +495,41 @@ void Scanner::scan_loop() {
 
         int quota = estimate_quota();
 
-        // 移除已完成的 session，并推送报告
-        sessions_.erase(
-            std::remove_if(
-                sessions_.begin(),
-                sessions_.end(),
-                [this, &wait_result_slot](const std::unique_ptr<ScanSession>& s) {
-                    if (s && s->ready_to_release()) {
-                        ScanReport rep;
-                        rep.target = { s->domain(), s->dns_result().ip, {}, 0 };
-                        rep.protocols = s->protocol_results();
-                        rep.total_time = config_.probe_timeout;
-                        wait_result_slot();
-                        result_queue_.push(rep);
-                        return true;
-                    }
-                    return false;
+        auto fetch_target = [this](ScanTarget& out) -> bool {
+            std::lock_guard<std::mutex> lock(targets_mutex_);
+            if (targets_.empty()) {
+                targets_cv_.notify_one();
+                return false;
+            }
+            out = std::move(targets_.back());
+            targets_.pop_back();
+            return true;
+        };
+
+        // 复用已完成的 session，并推送报告
+        for (auto& s : sessions_) {
+            if (!s || s->is_idle()) continue;
+            if (s->ready_to_release()) {
+                ScanReport rep;
+                rep.target = s->target();
+                rep.protocols = s->protocol_results();
+                rep.total_time = config_.probe_timeout;
+                wait_result_slot();
+                result_queue_.push(rep);
+
+                ScanTarget next_target;
+                if (fetch_target(next_target)) {
+                    s->reset(
+                        std::move(next_target),
+                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                        protocols_
+                    );
+                    s->set_only_success(config_.only_success);
+                } else {
+                    s->mark_idle();
                 }
-            ),
-            sessions_.end()
-        );
+            }
+        }
 
         // 先给现有 session 分配任务
         for (auto& s : sessions_) {
@@ -520,49 +543,75 @@ void Scanner::scan_loop() {
         // 创建新 session 并分配任务
         while (quota > 0) {
             // 检查最大并发会话数（如果有配置）
-            if (config_.max_work_count > 0 && sessions_.size() >= config_.max_work_count) {
-                break;
+            if (config_.max_work_count > 0) {
+                int active_sessions = 0;
+                for (const auto& s : sessions_) {
+                    if (s && !s->is_idle()) {
+                        ++active_sessions;
+                    }
+                }
+                if (active_sessions >= static_cast<int>(config_.max_work_count)) {
+                    break;
+                }
             }
 
             ScanTarget t;
-            {
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                if (targets_.empty()) {
-                    // 唤醒输入线程，告知可以继续插入
-                    targets_cv_.notify_one();
+            if (!fetch_target(t)) {
+                break;
+            }
+
+            ScanSession* idle_session = nullptr;
+            for (auto& s : sessions_) {
+                if (s && s->is_idle()) {
+                    idle_session = s.get();
                     break;
                 }
-                t = targets_.back();
-                targets_.pop_back();
             }
 
-            auto sess = std::make_unique<ScanSession>(
-                t,
-                dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                config_.dns_timeout,
-                config_.probe_timeout,
-                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                protocols_
-            );
-            sess->set_only_success(config_.only_success);
+            if (idle_session) {
+                idle_session->reset(
+                    std::move(t),
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_
+                );
+                idle_session->set_only_success(config_.only_success);
 
-            while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
-                --quota;
+                while (quota > 0 && idle_session->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                    --quota;
+                }
+            } else {
+                auto sess = std::make_unique<ScanSession>(
+                    t,
+                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                    config_.dns_timeout,
+                    config_.probe_timeout,
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_
+                );
+                sess->set_only_success(config_.only_success);
+
+                while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                    --quota;
+                }
+
+                sessions_.push_back(std::move(sess));
             }
-
-            sessions_.push_back(std::move(sess));
         }
 
         // 检查是否完成
         bool has_pending = false;
+        bool has_active = false;
         for (auto& s : sessions_) {
-            if (s && s->tasks_completed() < s->tasks_total()) {
+            if (s && !s->is_idle()) {
+                has_active = true;
+            }
+            if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
                 has_pending = true;
                 break;
             }
         }
         
-        bool all_done = input_done_ && targets_.empty() && sessions_.empty() && !has_pending;
+        bool all_done = input_done_ && targets_.empty() && !has_active && !has_pending;
         if (all_done) {
             break;
         }
@@ -647,26 +696,40 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
     while (!stop_) {
         int quota = estimate_quota();
 
-        // 移除已完成的 session，并推送报告
-        sessions_.erase(
-            std::remove_if(
-                sessions_.begin(),
-                sessions_.end(),
-                [this, &wait_result_slot](const std::unique_ptr<ScanSession>& s) {
-                    if (s && s->ready_to_release()) {
-                        ScanReport rep;
-                        rep.target = { s->domain(), s->dns_result().ip, {}, 0 };
-                        rep.protocols = s->protocol_results();
-                        rep.total_time = config_.probe_timeout;
-                        wait_result_slot();
-                        result_queue_.push(rep);
-                        return true;
-                    }
-                    return false;
+        auto fetch_target = [this](ScanTarget& out) -> bool {
+            std::lock_guard<std::mutex> lock(targets_mutex_);
+            if (targets_.empty()) {
+                return false;
+            }
+            out = std::move(targets_.back());
+            targets_.pop_back();
+            return true;
+        };
+
+        // 复用已完成的 session，并推送报告
+        for (auto& s : sessions_) {
+            if (!s || s->is_idle()) continue;
+            if (s->ready_to_release()) {
+                ScanReport rep;
+                rep.target = s->target();
+                rep.protocols = s->protocol_results();
+                rep.total_time = config_.probe_timeout;
+                wait_result_slot();
+                result_queue_.push(rep);
+
+                ScanTarget next_target;
+                if (fetch_target(next_target)) {
+                    s->reset(
+                        std::move(next_target),
+                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                        protocols_
+                    );
+                    s->set_only_success(config_.only_success);
+                } else {
+                    s->mark_idle();
                 }
-            ),
-            sessions_.end()
-        );
+            }
+        }
 
         // 先给现有 session 分配任务
         for (auto& s : sessions_) {
@@ -680,45 +743,72 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
         // 创建新 session 并分配任务
         while (quota > 0) {
             // 检查最大并发会话数（如果有配置）
-            if (config_.max_work_count > 0 && sessions_.size() >= config_.max_work_count) {
-                break;
+            if (config_.max_work_count > 0) {
+                int active_sessions = 0;
+                for (const auto& s : sessions_) {
+                    if (s && !s->is_idle()) {
+                        ++active_sessions;
+                    }
+                }
+                if (active_sessions >= static_cast<int>(config_.max_work_count)) {
+                    break;
+                }
             }
 
             ScanTarget t;
-            {
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                if (targets_.empty()) break;
-                t = targets_.back();
-                targets_.pop_back();
+            if (!fetch_target(t)) break;
+
+            ScanSession* idle_session = nullptr;
+            for (auto& s : sessions_) {
+                if (s && s->is_idle()) {
+                    idle_session = s.get();
+                    break;
+                }
             }
 
-            auto sess = std::make_unique<ScanSession>(
-                t,
-                dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                config_.dns_timeout,
-                config_.probe_timeout,
-                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                protocols_
-            );            sess->set_only_success(config_.only_success);
-            while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
-                --quota;
-            }
+            if (idle_session) {
+                idle_session->reset(
+                    std::move(t),
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_
+                );
+                idle_session->set_only_success(config_.only_success);
+                while (quota > 0 && idle_session->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                    --quota;
+                }
+            } else {
+                auto sess = std::make_unique<ScanSession>(
+                    t,
+                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                    config_.dns_timeout,
+                    config_.probe_timeout,
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_
+                );            sess->set_only_success(config_.only_success);
+                while (quota > 0 && sess->start_one_probe(protocols_, *scan_pool_, io_exec, config_.probe_timeout)) {
+                    --quota;
+                }
 
-            sessions_.push_back(std::move(sess));
+                sessions_.push_back(std::move(sess));
+            }
         }
 
         // 无任务可做且目标和会话都空 -> 结束
         if (quota > 0) {
             bool has_pending = false;
+            bool has_active = false;
             for (auto& s : sessions_) {
-                if (s && s->tasks_completed() < s->tasks_total()) {
+                if (s && !s->is_idle()) {
+                    has_active = true;
+                }
+                if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
                     has_pending = true;
                     break;
                 }
             }
             if (!has_pending) {
                 std::lock_guard<std::mutex> lock(targets_mutex_);
-                if (targets_.empty() && sessions_.empty()) {
+                if (targets_.empty() && !has_active) {
                     break;
                 }
             }
