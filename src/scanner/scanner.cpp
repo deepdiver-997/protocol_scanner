@@ -155,6 +155,12 @@ void Scanner::start(const std::string& source_path) {
         successful_ips_ = checkpoint_info_.successful_count;
     }
     
+    // 预分配 targets_ 以减少重分配开销
+    {
+        std::lock_guard<std::mutex> lock(targets_mutex_);
+        targets_.reserve(std::min(config_.targets_max_size, size_t(10000)));
+    }
+    
     // 启动三个线程
     input_thread_ = std::thread([this, source_path, has_checkpoint]() {
         input_thread_func(source_path, has_checkpoint);
@@ -287,11 +293,12 @@ void Scanner::result_handler_thread() {
     };
 
     if (stream_mode) {
-        while (!stop_ || !result_queue_.empty()) {
+        while (true) {
+            bool should_stop = stop_.load();
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
 
-            if (!stop_ && elapsed < config_.result_flush_interval && result_queue_.empty()) {
+            if (!should_stop && elapsed < config_.result_flush_interval && result_queue_.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
@@ -329,11 +336,17 @@ void Scanner::result_handler_thread() {
             }
 
             last_flush = std::chrono::steady_clock::now();
+            
+            // 检查退出条件：stop 信号已发出 且 队列已清空
+            if (should_stop && result_queue_.empty() && batch.empty()) {
+                break;
+            }
         }
     } else {
         std::cout << "Warning: Non-stream mode may consume large memory for storing results." << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
-        while (!stop_ || !result_queue_.empty()) {
+        while (true) {
+            bool should_stop = stop_.load();
             std::vector<ScanReport> batch;
             ScanReport rep;
             while (result_queue_.try_pop(rep)) {
@@ -341,6 +354,7 @@ void Scanner::result_handler_thread() {
             }
 
             if (batch.empty()) {
+                if (should_stop) break;
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
@@ -430,6 +444,9 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
 
+    // 预分配 sessions_ 以减少重分配开销
+    sessions_.reserve(std::min(config_.max_work_count, size_t(1000)));
+
     // 内存监控：记录容器大小以便诊断内存问题
     auto last_mem_log = std::chrono::steady_clock::now();
 
@@ -465,7 +482,9 @@ void Scanner::scan_loop() {
         }
     };
 
-    while (!stop_) {
+    while (true) {
+        bool should_stop = stop_.load();
+        
         // 每10秒记录一次内存状态（用于诊断内存占用问题）
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
