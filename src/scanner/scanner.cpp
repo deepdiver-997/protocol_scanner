@@ -151,7 +151,9 @@ void Scanner::start(const std::string& source_path) {
         std::cout << "Resuming from last processed IP: " << checkpoint_info_.last_ip << std::endl;
         std::cout << "Last processed count: " << checkpoint_info_.processed_count << std::endl;
         std::cout << "Last successful count: " << checkpoint_info_.successful_count << std::endl;
-        processed_count_ = checkpoint_info_.processed_count;
+        // 【优化】只恢复 successful_ips_，不恢复 processed_count_
+        // processed_count_ 从 0 开始计算本轮新增，避免递增溢出
+        // 通过 input_file_offset 和 last_ip 恢复断点位置
         successful_ips_ = checkpoint_info_.successful_count;
     }
     
@@ -295,6 +297,7 @@ void Scanner::result_handler_thread() {
     if (stream_mode) {
         while (true) {
             bool should_stop = stop_.load();
+            // 【优化】集中获取时间，避免多次系统调用
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
 
@@ -335,7 +338,8 @@ void Scanner::result_handler_thread() {
                 report_ofs_.flush();
             }
 
-            last_flush = std::chrono::steady_clock::now();
+            // 【优化】使用循环开头的 now，而不是重新获取时间
+            last_flush = now;
             
             // 检查退出条件：stop 信号已发出 且 队列已清空
             if (should_stop && result_queue_.empty() && batch.empty()) {
