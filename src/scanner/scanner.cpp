@@ -151,10 +151,9 @@ void Scanner::start(const std::string& source_path) {
         std::cout << "Resuming from last processed IP: " << checkpoint_info_.last_ip << std::endl;
         std::cout << "Last processed count: " << checkpoint_info_.processed_count << std::endl;
         std::cout << "Last successful count: " << checkpoint_info_.successful_count << std::endl;
-        // 【优化】只恢复 successful_ips_，不恢复 processed_count_
-        // processed_count_ 从 0 开始计算本轮新增，避免递增溢出
-        // 通过 input_file_offset 和 last_ip 恢复断点位置
+        // 恢复累计值
         successful_ips_ = checkpoint_info_.successful_count;
+        processed_count_ = checkpoint_info_.processed_count;
     }
     
     // 预分配 targets_ 以减少重分配开销
@@ -167,6 +166,36 @@ void Scanner::start(const std::string& source_path) {
     input_thread_ = std::thread([this, source_path, has_checkpoint]() {
         input_thread_func(source_path, has_checkpoint);
     });
+    
+    // 【优化】等待 input_thread 至少加载一些 targets，避免其他线程过早竞争 targets_ 锁
+    // 这样可以保证 input_thread 在跳过已处理IP时不会被频繁抢占CPU
+    if (has_checkpoint) {
+        LOG_CORE_INFO("Waiting for input thread to load initial targets after checkpoint skip...");
+        const size_t min_targets_before_start = 100;  // 至少等待100个target加载
+        const auto start_wait = std::chrono::steady_clock::now();
+        while (!input_done_ && !stop_) {
+            size_t current_size = 0;
+            {
+                std::lock_guard<std::mutex> lock(targets_mutex_);
+                current_size = targets_.size();
+            }
+            
+            if (current_size >= min_targets_before_start) {
+                LOG_CORE_INFO("Initial targets loaded ({}), starting scan threads", current_size);
+                break;
+            }
+            
+            // 超时保护：如果等待超过30秒，强制启动（防止死锁）
+            auto elapsed = std::chrono::steady_clock::now() - start_wait;
+            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 30) {
+                LOG_CORE_WARN("Timeout waiting for initial targets, starting scan threads anyway");
+                break;
+            }
+            
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+        }
+    }
+    
     scan_thread_ = std::thread([this]() { scan_loop(); });
     result_thread_ = std::thread([this]() { result_handler_thread(); });
     
@@ -176,11 +205,18 @@ void Scanner::start(const std::string& source_path) {
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
     try {
         size_t loaded_count = 0;
+        size_t skipped_count = 0;  // 记录跳过的数量
         size_t input_offset = has_checkpoint ? checkpoint_info_.input_file_offset : 0;
 
         std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
         bool skip_mode = !skip_until_ip.empty();
-        size_t skipped_count = 0;
+
+        // 【优化】防止断点偏移错位：如果有偏移但没有last_ip（或processed_count=0），
+        // 说明是文件偏移跳转但无需查找特定IP，直接从偏移位置开始处理
+        if (has_checkpoint && input_offset > 0 && skip_until_ip.empty()) {
+            skip_mode = false;  // 直接从偏移开始，无需跳过
+            LOG_CORE_INFO("Resuming from file offset {} without IP skip", input_offset);
+        }
 
         auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str, size_t source_offset) -> bool {
             if (stop_) return false;
@@ -190,7 +226,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                 if (is_valid_ip_address(target_str)) {
                     if (target_str == skip_until_ip) {
                         skip_mode = false;  // 找到了断点，从下一个开始处理
-                        LOG_CORE_INFO("Resumed from checkpoint: {}", skip_until_ip);
+                        LOG_CORE_INFO("Resumed from checkpoint: {} (skipped {} IPs)", skip_until_ip, skipped_count);
                     } else {
                         skipped_count++;
                         return true;  // 跳过
@@ -221,12 +257,16 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         // blocking call, will return after all targets are loaded
         stream_domains_with_offset(source_path, input_offset, enqueue_target);
-        
-        total_targets_ = loaded_count;
 
-        input_done_ = true;
-        LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {})", 
-                     loaded_count, total_targets_.load());
+        // 计算总目标数：如果是从断点恢复，总数 = 本轮加载 + 之前累计处理
+        if (has_checkpoint) {
+            total_targets_ = loaded_count + checkpoint_info_.processed_count;
+            LOG_CORE_INFO("Input parsing completed: {} new targets loaded (total: {}, skipped: {})",
+                         loaded_count, total_targets_.load(), skipped_count);
+        } else {
+            total_targets_ = loaded_count;
+            LOG_CORE_INFO("Input parsing completed: {} targets loaded", total_targets_.load());
+        }
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
         input_done_ = true;
