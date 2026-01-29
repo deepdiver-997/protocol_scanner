@@ -257,9 +257,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                 }
             }
 
-            // 只有在需要入队时才创建字符串
-            std::string ip_str = boost::asio::ip::make_address_v4(ip_uint).to_string();
-
+            // 【关键优化】直接存储 uint32，延迟字符串化到真正需要时
             std::unique_lock<std::mutex> lock(targets_mutex_);
             targets_cv_.wait(lock, [this]() {
                 return targets_.size() < config_.targets_max_size || stop_;
@@ -268,8 +266,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             if (stop_) return false;
 
             ScanTarget t;
-            t.domain = ip_str;
-            t.ip = ip_str;
+            t.set_ip(ip_uint);  // 内部会设置 ip_uint 和 domain
             t.source_offset = source_offset;
 
             targets_.push_back(std::move(t));
@@ -338,7 +335,8 @@ void Scanner::result_handler_thread() {
             }
 
             processed_count_++;
-            last_processed_ip = !r.target.ip.empty() ? r.target.ip : r.target.domain;
+            last_processed_ip = r.target.get_ip_string();  // 使用新的 ip() 方法
+            if (last_processed_ip.empty()) last_processed_ip = r.target.domain;
             checkpoint_info_.input_file_offset = r.target.source_offset;
         }
 

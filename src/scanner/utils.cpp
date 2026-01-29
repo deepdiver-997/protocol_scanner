@@ -326,6 +326,101 @@ static size_t process_file_stream_with_offset(
     return emitted;
 }
 
+// 【新增】完全uint32版本：从文件读取到CIDR展开全程避免字符串创建
+static size_t process_file_stream_uint(
+    const std::string& filename,
+    size_t file_offset,
+    const std::function<bool(uint32_t, size_t)>& handle_target_uint,
+    bool& aborted,
+    uint32_t skip_until = 0
+) {
+    std::ifstream in(filename);
+    if (!in) {
+        LOG_FILE_IO_ERROR("Failed to open file: {}", filename);
+        return 0;
+    }
+
+    if (file_offset > 0) {
+        in.seekg(static_cast<std::streamoff>(file_offset), std::ios::beg);
+        if (!in) {
+            LOG_CORE_WARN("Failed to seek to offset {} in {}, fallback to start", file_offset, filename);
+            in.clear();
+            in.seekg(0, std::ios::beg);
+            file_offset = 0;
+        } else {
+            in.seekg(static_cast<std::streamoff>(file_offset - 1), std::ios::beg);
+            char prev = '\n';
+            in.get(prev);
+            if (prev != '\n' && prev != '\r') {
+                std::string discard;
+                std::getline(in, discard);
+            }
+        }
+    }
+
+    size_t emitted = 0;
+    std::string line;
+    while (true) {
+        std::streampos line_pos = in.tellg();
+        if (!std::getline(in, line)) break;
+        line = trim(line);
+        if (line.empty() || line[0] == '#' || line[0] == ';') continue;
+
+        size_t line_offset = 0;
+        if (line_pos != std::streampos(-1)) {
+            line_offset = static_cast<size_t>(line_pos);
+        }
+
+        // 检查是否为 CIDR 记号（IP/PREFIX）
+        if (line.find('/') != std::string::npos) {
+            bool ok = expand_cidr_stream_uint(line, [&](uint32_t ip_uint) {
+                // 【关键优化】直接传递uint32，零字符串创建！
+                if (!handle_target_uint(ip_uint, line_offset)) {
+                    aborted = true;
+                    return false;
+                }
+                ++emitted;
+                return true;
+            }, skip_until);
+            if (!ok) return emitted;
+            continue;
+        }
+
+        // 尝试判断是否为 IP 段 CSV (start_ip,end_ip,...)
+        if (line.find(',') != std::string::npos) {
+            std::stringstream ss(line);
+            std::string start_ip, end_ip;
+            if (std::getline(ss, start_ip, ',') && std::getline(ss, end_ip, ',')) {
+                bool ok = expand_ip_range_stream_uint(start_ip, end_ip, [&](uint32_t ip_uint) {
+                    // 【关键优化】直接传递uint32
+                    if (!handle_target_uint(ip_uint, line_offset)) {
+                        aborted = true;
+                        return false;
+                    }
+                    ++emitted;
+                    return true;
+                }, skip_until);
+                if (!ok) return emitted;
+                continue;
+            }
+        }
+
+        // 单个IP或域名
+        try {
+            auto addr = boost::asio::ip::make_address_v4(line);
+            if (!handle_target_uint(addr.to_uint(), line_offset)) {
+                aborted = true;
+                return emitted;
+            }
+        } catch (...) {
+            // 非IP，跳过（或可以特殊处理域名）
+        }
+        ++emitted;
+    }
+
+    return emitted;
+}
+
 size_t stream_domains(
     const std::string& path,
     size_t offset,
@@ -398,19 +493,7 @@ size_t stream_domains_with_offset_uint(
     size_t total = 0;
     bool aborted = false;
 
-    // 包装器：将 uint32 handler 适配到 process_file_stream_with_offset
-    auto string_handler = [&](const std::string& target_str, size_t offset) -> bool {
-        // 尝试解析为 IP，如果成功则传递 uint32
-        try {
-            auto addr = boost::asio::ip::make_address_v4(target_str);
-            return handle_target(addr.to_uint(), offset);
-        } catch (...) {
-            // 非 IP（例如域名），跳过或者可以选择传递特殊值
-            // 这里选择跳过，因为我们主要处理 IP 地址
-            return true;
-        }
-    };
-
+    // 【关键优化】直接使用uint32版本的process_file_stream_uint，零字符串创建
     try {
         if (fs::is_directory(path)) {
             if (file_offset > 0) {
@@ -419,11 +502,11 @@ size_t stream_domains_with_offset_uint(
             LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
                 if (!entry.is_regular_file()) continue;
-                total += process_file_stream_with_offset(entry.path().string(), 0, string_handler, aborted, skip_until);
+                total += process_file_stream_uint(entry.path().string(), 0, handle_target, aborted, skip_until);
                 if (aborted) break;
             }
         } else if (fs::is_regular_file(path)) {
-            total = process_file_stream_with_offset(path, file_offset, string_handler, aborted, skip_until);
+            total = process_file_stream_uint(path, file_offset, handle_target, aborted, skip_until);
         } else {
             LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
         }

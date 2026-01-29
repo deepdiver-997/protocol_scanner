@@ -572,16 +572,16 @@ int main(int argc, char* argv[]) {
             scanner::Logger::get_instance().set_level(spdlog::level::info);
         }
 
-        // 加载域名列表
+        // 【关键修复】不要提前加载所有域名到内存！！！
+        // 对于大文件（CIDR）会展开成百万/亿级IP，占用GB内存
+        // 只需检查文件是否存在即可，实际加载由Scanner的流式解析处理
         string domains_file = vm["domains"].as<string>();
-        auto domains = load_domains(domains_file);
-
-        if (domains.empty()) {
-            LOG_CORE_ERROR("No domains loaded from {}", domains_file);
+        if (!std::filesystem::exists(domains_file)) {
+            LOG_CORE_ERROR("Input file not found: {}", domains_file);
             return 1;
         }
-
-        LOG_CORE_INFO("Loaded {} domains from {}", domains.size(), domains_file);
+        
+        LOG_CORE_INFO("Input file: {}", domains_file);
 
         // 显示最终配置（在命令行参数覆盖后）
         if (config.io_thread_count > 0 && config.cpu_thread_count > 0) {

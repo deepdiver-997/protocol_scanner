@@ -43,12 +43,13 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
     available_ports_.clear();
 
     // 解析域名 -> IP
-    if (!target_.ip.empty()) {
+    std::string current_ip = target_.get_ip_string();
+    if (!current_ip.empty() || target_.ip_uint != 0) {
         // 已经有IP，直接使用
         dns_result_.domain = target_.domain;
-        dns_result_.ip = target_.ip;
+        dns_result_.ip = current_ip;
         dns_result_.success = true;
-        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, target_.ip);
+        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, current_ip);
     } else if (!target_.domain.empty() && dns_resolver_) {
         // 没有IP，需要DNS解析
         int max_retries = 2; // 默认尝试 2 次
@@ -56,10 +57,10 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
             DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
             dns_result_ = dr;
             if (dr.success && !dr.ip.empty()) {
-                target_.ip = dr.ip;
+                target_.set_ip(dr.ip);
                 break;
             } else if (!dr.ip.empty()) {
-                target_.ip = dr.ip;
+                target_.set_ip(dr.ip);
                 break;
             }
             if (i < max_retries) {
@@ -68,7 +69,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
             }
         }
         
-        if (target_.ip.empty()) {
+        if (target_.get_ip_string().empty()) {
             LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
             // 【优化】移除 set_state 调用
             set_error("DNS Resolution Failed");
@@ -76,7 +77,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
     } else {
         // 既没有IP也没有有效的域名
         dns_result_.domain = target_.domain;
-        dns_result_.ip = target_.ip;
+        dns_result_.ip = target_.get_ip_string();
         dns_result_.success = false;
     }
 
@@ -122,12 +123,13 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
     available_ports_.clear();
 
     // 解析域名 -> IP
-    if (!target_.ip.empty()) {
+    std::string current_ip = target_.get_ip_string();
+    if (!current_ip.empty() || target_.ip_uint != 0) {
         // 已经有IP，直接使用
         dns_result_.domain = target_.domain;
-        dns_result_.ip = target_.ip;
+        dns_result_.ip = current_ip;
         dns_result_.success = true;
-        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, target_.ip);
+        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, current_ip);
     } else if (!target_.domain.empty() && dns_resolver_) {
         // 没有IP，需要DNS解析
         int max_retries = 2; // 默认尝试 2 次
@@ -135,10 +137,10 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
             DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
             dns_result_ = dr;
             if (dr.success && !dr.ip.empty()) {
-                target_.ip = dr.ip;
+                target_.set_ip(dr.ip);
                 break;
             } else if (!dr.ip.empty()) {
-                target_.ip = dr.ip;
+                target_.set_ip(dr.ip);
                 break;
             }
             if (i < max_retries) {
@@ -147,7 +149,7 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
             }
         }
         
-        if (target_.ip.empty()) {
+        if (target_.get_ip_string().empty()) {
             LOG_CORE_ERROR("DNS resolution failed for {} after {} retries", target_.domain, max_retries + 1);
             // 【优化】移除 set_state 调用
             set_error("DNS Resolution Failed");
@@ -155,7 +157,7 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
     } else {
         // 既没有IP也没有有效的域名
         dns_result_.domain = target_.domain;
-        dns_result_.ip = target_.ip;
+        dns_result_.ip = target_.get_ip_string();
         dns_result_.success = false;
     }
 
@@ -196,7 +198,8 @@ bool ScanSession::start_one_probe(
     const boost::asio::any_io_executor& exec,
     Timeout timeout
 ) {
-    if (target_.ip.empty()) {
+    std::string current_ip = target_.get_ip_string();
+    if (current_ip.empty()) {
         return false;
     }
 
@@ -232,7 +235,7 @@ bool ScanSession::start_one_probe(
     // 计算有效超时：优先考虑动态（当全局为0时），并与协议默认超时取最大值
     Timeout effective_timeout = timeout;
     if (effective_timeout.count() == 0) {
-        effective_timeout = LatencyManager::instance().get_timeout(target_.ip);
+        effective_timeout = LatencyManager::instance().get_timeout(target_.get_ip_string());
     }
     // 按照约定：每个协议的最终超时 = max(协议默认超时, 全局/动态超时)
     Timeout proto_default = proto_ptr->default_timeout();
@@ -243,11 +246,11 @@ bool ScanSession::start_one_probe(
     // 提交任务到扫描线程池，实际 IO 在 exec 所属 io_context
     scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
         // 优先使用域名作为 target，如果没有域名则使用 IP
-        const std::string& target = target_.domain.empty() ? target_.ip : target_.domain;
+        const std::string& target = target_.domain.empty() ? target_.get_ip_string() : target_.domain;
         
         proto_ptr->async_probe(
             target,
-            target_.ip,
+            target_.get_ip_string(),
             port,
             timeout,
             exec,
@@ -256,7 +259,7 @@ bool ScanSession::start_one_probe(
                      // 临时增加调试日志，采样打印错误
                      static int err_log_count = 0;
                      if (err_log_count++ < 10) {
-                         LOG_CORE_WARN("Probe failed for {} {}: {}", target_.ip, proto_name, r.error);
+                         LOG_CORE_WARN("Probe failed for {} {}: {}", target_.get_ip_string(), proto_name, r.error);
                      }
                 }
                 push_result(std::move(r));
@@ -281,7 +284,7 @@ int ScanSession::start_all_pending_probes(
     // 这样可以减少 start_one_probe 的调用频率（从 7 次/session → 1 次）
     // 从而降低 scan_loop 中的遍历和 start_one_probe 的 CPU 热点
     
-    if (target_.ip.empty() || quota <= 0) {
+    if (target_.get_ip_string().empty() || quota <= 0) {
         return 0;
     }
 
@@ -319,7 +322,7 @@ int ScanSession::start_all_pending_probes(
         // 计算有效超时
         Timeout effective_timeout = timeout;
         if (effective_timeout.count() == 0) {
-            effective_timeout = LatencyManager::instance().get_timeout(target_.ip);
+            effective_timeout = LatencyManager::instance().get_timeout(target_.get_ip_string());
         }
         Timeout proto_default = proto_ptr->default_timeout();
         if (proto_default > effective_timeout) {
@@ -328,11 +331,11 @@ int ScanSession::start_all_pending_probes(
 
         // 提交任务到扫描线程池
         scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
-            const std::string& target = target_.domain.empty() ? target_.ip : target_.domain;
+            const std::string& target = target_.domain.empty() ? target_.get_ip_string() : target_.domain;
             
             proto_ptr->async_probe(
                 target,
-                target_.ip,
+                target_.get_ip_string(),
                 port,
                 timeout,
                 exec,
@@ -340,7 +343,7 @@ int ScanSession::start_all_pending_probes(
                     if (!r.accessible && !r.error.empty()) {
                         static int err_log_count = 0;
                         if (err_log_count++ < 10) {
-                            LOG_CORE_WARN("Probe failed for {} {}: {}", target_.ip, proto_name, r.error);
+                            LOG_CORE_WARN("Probe failed for {} {}: {}", target_.get_ip_string(), proto_name, r.error);
                         }
                     }
                     push_result(std::move(r));
@@ -463,7 +466,7 @@ void ScanSession::push_result(ProtocolResult&& r) {
     // 动态超时统计：如果有响应且成功
     if (r.accessible && r.attrs.response_time_ms > 0) {
         LatencyManager::instance().update(
-            target_.ip, 
+            target_.get_ip_string(), 
             std::chrono::milliseconds(static_cast<int64_t>(r.attrs.response_time_ms))
         );
     }

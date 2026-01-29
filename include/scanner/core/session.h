@@ -78,7 +78,7 @@ public:
     std::size_t tasks_completed() const { return tasks_completed_.load(std::memory_order_relaxed); }
     bool ready_to_release() const { 
         // 如果没有 IP 且域名非空，说明域名解析失败，应该允许释放
-        if (target_.ip.empty() && !target_.domain.empty()) return true;
+        if (target_.get_ip_string().empty() && !target_.domain.empty()) return true;
         // 如果总任务数为 0，说明没有任何要扫的，也该释放
         if (tasks_total() == 0) return true;
         return tasks_completed() >= tasks_total(); 

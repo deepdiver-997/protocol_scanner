@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <functional>
 #include <boost/asio/any_io_executor.hpp>
+#include <boost/asio/ip/address_v4.hpp>
 
 namespace scanner {
 
@@ -82,13 +83,34 @@ struct ProtocolResult {
     std::string error;          // 错误信息
 };
 
-// 扫描目标
+// 扫描目标（优化内存占用：IP 用 uint32 存储）
 struct ScanTarget {
-    std::string domain;         // 域名
-    std::string ip;            // IP 地址
-    std::vector<std::string> mx_records; // MX 记录
-    int priority = 0;          // 优先级
+    uint32_t ip_uint = 0;      // IP 地址（uint32，节省内存）
+    std::string domain;         // 域名（对于纯 IP 扫描，domain == ip 字符串化结果）
     size_t source_offset = 0;  // 输入文件行起始偏移（用于断点恢复加速）
+    
+    // 【优化】惰性字符串化：只在需要时才生成 IP 字符串
+    std::string get_ip_string() const {
+        if (ip_uint == 0) return "";
+        return boost::asio::ip::make_address_v4(ip_uint).to_string();
+    }
+    
+    // 设置 IP（同时设置 uint32 和 domain）
+    void set_ip(uint32_t ip_value) {
+        ip_uint = ip_value;
+        domain = boost::asio::ip::make_address_v4(ip_value).to_string();
+    }
+    
+    void set_ip(const std::string& ip_str) {
+        try {
+            ip_uint = boost::asio::ip::make_address_v4(ip_str).to_uint();
+            domain = ip_str;
+        } catch (...) {
+            // 非 IP，当作域名
+            ip_uint = 0;
+            domain = ip_str;
+        }
+    }
 };
 
 // 扫描报告
