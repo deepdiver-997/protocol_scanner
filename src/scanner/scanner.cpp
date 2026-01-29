@@ -167,34 +167,37 @@ void Scanner::start(const std::string& source_path) {
         input_thread_func(source_path, has_checkpoint);
     });
     
-    // 【优化】等待 input_thread 至少加载一些 targets，避免其他线程过早竞争 targets_ 锁
-    // 这样可以保证 input_thread 在跳过已处理IP时不会被频繁抢占CPU
+    // 【优化】等待 input_thread 至少加载一些 targets，但有超时防止卡住
+    // 即使没有加载完，也要启动 scan_loop 开始消费，否则输入线程会因为 targets 满而阻塞
     if (has_checkpoint) {
         LOG_CORE_INFO("Waiting for input thread to load initial targets after checkpoint skip...");
-        const size_t min_targets_before_start = 100;  // 至少等待100个target加载
+        const size_t min_targets_before_start = 50;  // 至少等待50个target加载
         const auto start_wait = std::chrono::steady_clock::now();
-        while (!input_done_ && !stop_) {
-            size_t current_size = 0;
-            {
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                current_size = targets_.size();
-            }
+        bool got_enough_targets = false;
+        
+        while (!input_done_ && !stop_ && !got_enough_targets) {
+            std::unique_lock<std::mutex> lock(targets_mutex_);
+            auto ready = targets_cv_.wait_for(lock, std::chrono::seconds(3), [this]() {
+                return targets_.size() >= min_targets_before_start || input_done_ || stop_;
+            });
             
-            if (current_size >= min_targets_before_start) {
-                LOG_CORE_INFO("Initial targets loaded ({}), starting scan threads", current_size);
+            if (ready && targets_.size() >= min_targets_before_start) {
+                LOG_CORE_INFO("Initial targets loaded ({}), starting scan threads", targets_.size());
+                got_enough_targets = true;
                 break;
             }
             
-            // 超时保护：如果等待超过30秒，强制启动（防止死锁）
+            // 超时 3 秒后强制启动，不然输入线程会因为 targets 满而阻塞，导致死锁
             auto elapsed = std::chrono::steady_clock::now() - start_wait;
-            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 30) {
-                LOG_CORE_WARN("Timeout waiting for initial targets, starting scan threads anyway");
+            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 3) {
+                LOG_CORE_WARN("Timeout waiting for {} targets (have {}), force starting scan threads",
+                              min_targets_before_start, targets_.size());
+                got_enough_targets = true;
                 break;
             }
-            
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
+    std::cout << "Already have " << targets_.size() << " targets loaded, starting scan..." << std::endl;
     
     scan_thread_ = std::thread([this]() { scan_loop(); });
     result_thread_ = std::thread([this]() { result_handler_thread(); });
@@ -210,6 +213,17 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
         bool skip_mode = !skip_until_ip.empty();
+        
+        // 【优化】将断点 IP 转为数值，避免字符串比较和临时对象创建
+        uint32_t skip_until_uint = 0;
+        if (skip_mode && is_valid_ip_address(skip_until_ip)) {
+            try {
+                skip_until_uint = boost::asio::ip::make_address_v4(skip_until_ip).to_uint();
+                LOG_CORE_INFO("Checkpoint IP {} converted to uint32: {}", skip_until_ip, skip_until_uint);
+            } catch (...) {
+                LOG_CORE_WARN("Failed to parse checkpoint IP {}, fallback to string compare", skip_until_ip);
+            }
+        }
 
         // 【优化】防止断点偏移错位：如果有偏移但没有last_ip（或processed_count=0），
         // 说明是文件偏移跳转但无需查找特定IP，直接从偏移位置开始处理
@@ -218,21 +232,28 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             LOG_CORE_INFO("Resuming from file offset {} without IP skip", input_offset);
         }
 
-        auto enqueue_target = [this, &loaded_count, &skip_mode, &skip_until_ip, &skipped_count](const std::string& target_str, size_t source_offset) -> bool {
+        // 【关键优化】直接接受 uint32，完全避免字符串转换开销
+        auto enqueue_target_uint = [this, &loaded_count, &skip_mode, &skip_until_uint, &skipped_count, &skip_until_ip](uint32_t ip_uint, size_t source_offset) -> bool {
             if (stop_) return false;
 
-            // 跳过已处理的 IP
+            // 【高速路径】使用纯数值比较，零字符串创建
             if (skip_mode) {
-                if (is_valid_ip_address(target_str)) {
-                    if (target_str == skip_until_ip) {
-                        skip_mode = false;  // 找到了断点，从下一个开始处理
+                if (skip_until_uint > 0) {
+                    if (ip_uint == skip_until_uint) {
+                        skip_mode = false;
                         LOG_CORE_INFO("Resumed from checkpoint: {} (skipped {} IPs)", skip_until_ip, skipped_count);
-                    } else {
+                    } else if (ip_uint < skip_until_uint) {
                         skipped_count++;
-                        return true;  // 跳过
+                        return true;  // 跳过，不创建字符串
+                    } else {
+                        LOG_CORE_WARN("IP uint {} exceeds checkpoint {}, starting from here", ip_uint, skip_until_uint);
+                        skip_mode = false;
                     }
                 }
             }
+
+            // 只有在需要入队时才创建字符串
+            std::string ip_str = boost::asio::ip::make_address_v4(ip_uint).to_string();
 
             std::unique_lock<std::mutex> lock(targets_mutex_);
             targets_cv_.wait(lock, [this]() {
@@ -242,21 +263,20 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             if (stop_) return false;
 
             ScanTarget t;
-            if (is_valid_ip_address(target_str)) {
-                t.domain = target_str;
-                t.ip = target_str;
-            } else {
-                t.domain = target_str;
-            }
+            t.domain = ip_str;
+            t.ip = ip_str;
             t.source_offset = source_offset;
 
             targets_.push_back(std::move(t));
+            lock.unlock();
+            targets_cv_.notify_one();
             ++loaded_count;
             return true;
         };
 
         // blocking call, will return after all targets are loaded
-        stream_domains_with_offset(source_path, input_offset, enqueue_target);
+        // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
+        stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint);
 
         // 计算总目标数：如果是从断点恢复，总数 = 本轮加载 + 之前累计处理
         if (has_checkpoint) {
@@ -267,6 +287,8 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             total_targets_ = loaded_count;
             LOG_CORE_INFO("Input parsing completed: {} targets loaded", total_targets_.load());
         }
+
+        input_done_ = true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
         input_done_ = true;
@@ -486,6 +508,7 @@ void Scanner::result_handler_thread() {
 }
 
 void Scanner::scan_loop() {
+    std::cout << "Scan loop started." << std::endl;
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
 
     // 预分配 sessions_ 以减少重分配开销
@@ -658,14 +681,18 @@ void Scanner::scan_loop() {
         }
 
         // 如果还有配额，查找 idle session 进行复用或创建新的
-        while (quota > 0 && idle_count > 0) {
+        int max_sessions = config_.max_work_count > 0
+            ? static_cast<int>(config_.max_work_count)
+            : std::max(1, config_.batch_size);
+
+        while (quota > 0) {
             ScanTarget t;
             if (!fetch_target(t)) {
                 break;
             }
 
             // 检查最大并发会话数
-            if (config_.max_work_count > 0 && active_sessions >= static_cast<int>(config_.max_work_count)) {
+            if (active_sessions >= max_sessions) {
                 // 放回这个 target，不创建新会话
                 std::lock_guard<std::mutex> lock(targets_mutex_);
                 targets_.push_back(std::move(t));
@@ -674,12 +701,14 @@ void Scanner::scan_loop() {
 
             // 查找 idle session 进行复用
             ScanSession* idle_session = nullptr;
-            for (auto& s : sessions_) {
-                if (s && s->is_idle()) {
-                    idle_session = s.get();
-                    idle_count--;
-                    active_sessions++;
-                    break;
+            if (idle_count > 0) {
+                for (auto& s : sessions_) {
+                    if (s && s->is_idle()) {
+                        idle_session = s.get();
+                        idle_count--;
+                        active_sessions++;
+                        break;
+                    }
                 }
             }
 
@@ -694,12 +723,19 @@ void Scanner::scan_loop() {
                 int started = idle_session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                 quota -= started;
             } else {
-                // 【优化】没有空闲 session，直接 break 等待复用
-                // 预分配了足够的 session，不需要再创建新的
-                // 这样保证了 sessions_ 的大小受控
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                targets_.push_back(std::move(t));
-                break;
+                auto sess = std::make_unique<ScanSession>(
+                    t,
+                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                    config_.dns_timeout,
+                    config_.probe_timeout,
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_
+                );
+                sess->set_only_success(config_.only_success);
+                int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                quota -= started;
+                sessions_.push_back(std::move(sess));
+                active_sessions++;
             }
         }
 

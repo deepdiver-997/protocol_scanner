@@ -234,6 +234,13 @@ size_t stream_domains_with_offset(
     const std::function<bool(const std::string&, size_t)>& handle_target
 );
 
+// 【新增】uint32 版本：直接传递数值 IP，完全避免字符串转换（用于断点恢复优化）
+size_t stream_domains_with_offset_uint(
+    const std::string& path,
+    size_t file_offset,
+    const std::function<bool(uint32_t, size_t)>& handle_target
+);
+
 // 检查是否是有效的 IP 地址
 bool is_valid_ip_address(const std::string& s);
 

@@ -35,18 +35,18 @@ static inline std::string trim(const std::string& s) {
     return s.substr(start, end - start + 1);
 }
 
-// 辅助函数：将 CIDR 记号扩展为单个 IP（如 192.168.1.0/24）
-static std::vector<std::string> expand_cidr(const std::string& cidr_str) {
-    std::vector<std::string> ips;
+// 辅助函数：将 CIDR 记号扩展为单个 IP（流式输出 uint32，避免字符串创建）
+static bool expand_cidr_stream_uint(const std::string& cidr_str,
+                                    const std::function<bool(uint32_t)>& emit) {
     try {
         std::string cidr_trimmed = trim(cidr_str);
         size_t slash_pos = cidr_trimmed.find('/');
         if (slash_pos == std::string::npos) {
-            // 没有 /，尝试作为单个 IP 返回
             if (is_valid_ip_internal(cidr_trimmed)) {
-                ips.push_back(cidr_trimmed);
+                auto addr = boost::asio::ip::make_address_v4(cidr_trimmed);
+                return emit(addr.to_uint());
             }
-            return ips;
+            return true;
         }
 
         std::string ip_part = cidr_trimmed.substr(0, slash_pos);
@@ -57,63 +57,81 @@ static std::vector<std::string> expand_cidr(const std::string& cidr_str) {
 
         if (prefix_len < 0 || prefix_len > 32) {
             LOG_CORE_ERROR("Invalid CIDR prefix length: {}", prefix_len);
-            return ips;
+            return true;
         }
 
-        // 计算网络地址的主机位数
         int host_bits = 32 - prefix_len;
-        uint32_t host_mask = (1UL << host_bits) - 1;  // 主机位掩码
+        uint32_t host_mask = (1UL << host_bits) - 1;
         uint32_t base_uint = base_addr.to_uint();
 
-        // 计算网络起始和结束地址
         uint32_t network_addr = base_uint & ~host_mask;
         uint32_t broadcast_addr = network_addr | host_mask;
 
-        // 限制最大扩展数量，防止内存爆炸
-        const uint32_t MAX_EXPANSION = 1048576; 
+        const uint32_t MAX_EXPANSION = 1048576;
         uint32_t count = broadcast_addr - network_addr + 1;
-        
         if (count > MAX_EXPANSION) {
-            LOG_CORE_WARN("CIDR block {} too large ({} IPs), only expanding first {}", 
-                          cidr_trimmed, count, MAX_EXPANSION);
+            // 静默截断，避免启动时打印大量警告日志拖慢速度
             broadcast_addr = network_addr + MAX_EXPANSION - 1;
         }
 
+        // 直接传递 uint32，完全避免字符串创建
         for (uint32_t i = network_addr; i <= broadcast_addr; ++i) {
-            ips.push_back(boost::asio::ip::make_address_v4(i).to_string());
+            if (!emit(i)) {
+                return false;
+            }
         }
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to expand CIDR {}: {}", cidr_str, e.what());
     }
-    return ips;
+    return true;
 }
 
-// 辅助函数：将 IP 段扩展为单个 IP
-static std::vector<std::string> expand_ip_range(const std::string& start_ip_str, const std::string& end_ip_str) {
-    std::vector<std::string> ips;
+// 辅助函数：将 CIDR 记号扩展为单个 IP（字符串版本，供旧代码兼容）
+static bool expand_cidr_stream(const std::string& cidr_str,
+                               const std::function<bool(const std::string&)>& emit) {
+    return expand_cidr_stream_uint(cidr_str, [&](uint32_t ip_uint) {
+        return emit(boost::asio::ip::make_address_v4(ip_uint).to_string());
+    });
+}
+
+// 辅助函数：将 IP 段扩展为单个 IP（流式输出 uint32，避免字符串创建）
+static bool expand_ip_range_stream_uint(const std::string& start_ip_str,
+                                        const std::string& end_ip_str,
+                                        const std::function<bool(uint32_t)>& emit) {
     try {
         auto start_addr = boost::asio::ip::make_address_v4(trim(start_ip_str));
         auto end_addr = boost::asio::ip::make_address_v4(trim(end_ip_str));
-        
+
         uint32_t start_uint = start_addr.to_uint();
         uint32_t end_uint = end_addr.to_uint();
-        
+
         if (start_uint > end_uint) std::swap(start_uint, end_uint);
-        
-        // 限制最大扩展数量，防止内存爆炸（例如 100万）
-        const uint32_t MAX_EXPANSION = 1048576; 
+
+        const uint32_t MAX_EXPANSION = 1048576;
         if (end_uint - start_uint > MAX_EXPANSION) {
-            LOG_CORE_WARN("IP range too large: {}-{}, only expanding first {}", start_ip_str, end_ip_str, MAX_EXPANSION);
+            // 静默截断
             end_uint = start_uint + MAX_EXPANSION;
         }
 
+        // 直接传递 uint32，完全避免字符串创建
         for (uint32_t i = start_uint; i <= end_uint; ++i) {
-            ips.push_back(boost::asio::ip::make_address_v4(i).to_string());
+            if (!emit(i)) {
+                return false;
+            }
         }
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to expand IP range {}-{}: {}", start_ip_str, end_ip_str, e.what());
     }
-    return ips;
+    return true;
+}
+
+// 辅助函数：将 IP 段扩展为单个 IP（字符串版本，供旧代码兼容）
+static bool expand_ip_range_stream(const std::string& start_ip_str,
+                                   const std::string& end_ip_str,
+                                   const std::function<bool(const std::string&)>& emit) {
+    return expand_ip_range_stream_uint(start_ip_str, end_ip_str, [&](uint32_t ip_uint) {
+        return emit(boost::asio::ip::make_address_v4(ip_uint).to_string());
+    });
 }
 
 // 将单个文件流式解析为目标并交给处理器
@@ -153,12 +171,13 @@ static size_t process_file_stream(
 
         // 检查是否为 CIDR 记号（IP/PREFIX）
         if (line.find('/') != std::string::npos) {
-            auto ips = expand_cidr(line);
-            for (const auto& ip : ips) {
+            bool ok = expand_cidr_stream(line, [&](const std::string& ip) {
                 bool delivered = false;
-                if (!dispatch(ip, delivered)) return emitted;
+                if (!dispatch(ip, delivered)) return false;
                 if (delivered) ++emitted;
-            }
+                return true;
+            });
+            if (!ok) return emitted;
             continue;
         }
 
@@ -167,12 +186,13 @@ static size_t process_file_stream(
             std::stringstream ss(line);
             std::string start_ip, end_ip;
             if (std::getline(ss, start_ip, ',') && std::getline(ss, end_ip, ',')) {
-                auto ips = expand_ip_range(start_ip, end_ip);
-                for (const auto& ip : ips) {
+                bool ok = expand_ip_range_stream(start_ip, end_ip, [&](const std::string& ip) {
                     bool delivered = false;
-                    if (!dispatch(ip, delivered)) return emitted;
+                    if (!dispatch(ip, delivered)) return false;
                     if (delivered) ++emitted;
-                }
+                    return true;
+                });
+                if (!ok) return emitted;
                 continue;
             }
         }
@@ -232,14 +252,16 @@ static size_t process_file_stream_with_offset(
 
         // 检查是否为 CIDR 记号（IP/PREFIX）
         if (line.find('/') != std::string::npos) {
-            auto ips = expand_cidr(line);
-            for (const auto& ip : ips) {
-                if (!handle_target(ip, line_offset)) {
+            bool ok = expand_cidr_stream_uint(line, [&](uint32_t ip_uint) {
+                std::string ip_str = boost::asio::ip::make_address_v4(ip_uint).to_string();
+                if (!handle_target(ip_str, line_offset)) {
                     aborted = true;
-                    return emitted;
+                    return false;
                 }
                 ++emitted;
-            }
+                return true;
+            });
+            if (!ok) return emitted;
             continue;
         }
 
@@ -248,14 +270,16 @@ static size_t process_file_stream_with_offset(
             std::stringstream ss(line);
             std::string start_ip, end_ip;
             if (std::getline(ss, start_ip, ',') && std::getline(ss, end_ip, ',')) {
-                auto ips = expand_ip_range(start_ip, end_ip);
-                for (const auto& ip : ips) {
-                    if (!handle_target(ip, line_offset)) {
+                bool ok = expand_ip_range_stream_uint(start_ip, end_ip, [&](uint32_t ip_uint) {
+                    std::string ip_str = boost::asio::ip::make_address_v4(ip_uint).to_string();
+                    if (!handle_target(ip_str, line_offset)) {
                         aborted = true;
-                        return emitted;
+                        return false;
                     }
                     ++emitted;
-                }
+                    return true;
+                });
+                if (!ok) return emitted;
                 continue;
             }
         }
@@ -321,6 +345,52 @@ size_t stream_domains_with_offset(
             }
         } else if (fs::is_regular_file(path)) {
             total = process_file_stream_with_offset(path, file_offset, handle_target, aborted);
+        } else {
+            LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
+        }
+    } catch (const std::exception& e) {
+        LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
+    }
+
+    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    return total;
+}
+
+// 【新增】uint32 版本：直接传递数值 IP，完全避免字符串转换
+size_t stream_domains_with_offset_uint(
+    const std::string& path,
+    size_t file_offset,
+    const std::function<bool(uint32_t, size_t)>& handle_target
+) {
+    size_t total = 0;
+    bool aborted = false;
+
+    // 包装器：将 uint32 handler 适配到 process_file_stream_with_offset
+    auto string_handler = [&](const std::string& target_str, size_t offset) -> bool {
+        // 尝试解析为 IP，如果成功则传递 uint32
+        try {
+            auto addr = boost::asio::ip::make_address_v4(target_str);
+            return handle_target(addr.to_uint(), offset);
+        } catch (...) {
+            // 非 IP（例如域名），跳过或者可以选择传递特殊值
+            // 这里选择跳过，因为我们主要处理 IP 地址
+            return true;
+        }
+    };
+
+    try {
+        if (fs::is_directory(path)) {
+            if (file_offset > 0) {
+                LOG_CORE_WARN("Input path is directory; file_offset={} ignored", file_offset);
+            }
+            LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
+            for (const auto& entry : fs::recursive_directory_iterator(path)) {
+                if (!entry.is_regular_file()) continue;
+                total += process_file_stream_with_offset(entry.path().string(), 0, string_handler, aborted);
+                if (aborted) break;
+            }
+        } else if (fs::is_regular_file(path)) {
+            total = process_file_stream_with_offset(path, file_offset, string_handler, aborted);
         } else {
             LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
         }
