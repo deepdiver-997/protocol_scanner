@@ -397,12 +397,13 @@ void ScanSession::init_protocol_queues(const std::vector<std::unique_ptr<IProtoc
     protocol_port_queues_.clear();
     protocol_result_queues_.clear();
 
-    // 为每个协议创建结果队列
+    // 【优化】懒加载：不预先创建结果队列，改为按需创建
+    // 只初始化端口队列
     for (const auto& p : protocols) {
         if (!p) continue;
         const std::string pname = p->name();
-        protocol_result_queues_[pname] = std::make_shared<TaskQueue<ProtocolResult>>();
         protocol_port_queues_[pname] = std::queue<Port>();
+        // protocol_result_queues_ 不再预先创建
     }
 
     if (available_ports_.empty()) {
@@ -449,7 +450,11 @@ bool ScanSession::next_port(const std::string& protocol_name, Port& out_port) {
 std::shared_ptr<TaskQueue<ProtocolResult>> ScanSession::result_queue(const std::string& protocol_name) {
     auto it = protocol_result_queues_.find(protocol_name);
     if (it != protocol_result_queues_.end()) return it->second;
-    return nullptr;
+    
+    // 【优化】懒加载：首次访问时才创建队列
+    auto queue = std::make_shared<TaskQueue<ProtocolResult>>();
+    protocol_result_queues_[protocol_name] = queue;
+    return queue;
 }
 
 void ScanSession::push_result(ProtocolResult&& r) {

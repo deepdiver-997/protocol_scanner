@@ -157,9 +157,10 @@ void Scanner::start(const std::string& source_path) {
     }
     
     // 预分配 targets_ 以减少重分配开销
+    // 【优化】按实际需要动态扩展，初始预留少一点
     {
         std::lock_guard<std::mutex> lock(targets_mutex_);
-        targets_.reserve(std::min(config_.targets_max_size, size_t(10000)));
+        targets_.reserve(std::min(static_cast<size_t>(config_.batch_size * 2), size_t(2000)));
     }
     
     // 启动三个线程
@@ -215,8 +216,12 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         bool skip_mode = !skip_until_ip.empty();
         
         // 【优化】将断点 IP 转为数值，避免字符串比较和临时对象创建
+        // 优先使用已保存的 uint32 值（如果可用）
         uint32_t skip_until_uint = 0;
-        if (skip_mode && is_valid_ip_address(skip_until_ip)) {
+        if (has_checkpoint && checkpoint_info_.last_processed_ip_uint > 0) {
+            skip_until_uint = checkpoint_info_.last_processed_ip_uint;
+            LOG_CORE_INFO("Using saved checkpoint IP uint32: {}", skip_until_uint);
+        } else if (skip_mode && is_valid_ip_address(skip_until_ip)) {
             try {
                 skip_until_uint = boost::asio::ip::make_address_v4(skip_until_ip).to_uint();
                 LOG_CORE_INFO("Checkpoint IP {} converted to uint32: {}", skip_until_ip, skip_until_uint);
@@ -276,7 +281,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         // blocking call, will return after all targets are loaded
         // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
-        stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint);
+        stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
 
         // 计算总目标数：如果是从断点恢复，总数 = 本轮加载 + 之前累计处理
         if (has_checkpoint) {
@@ -342,6 +347,15 @@ void Scanner::result_handler_thread() {
         checkpoint_info_.processed_count = processed_count_.load();
         checkpoint_info_.successful_count = successful_ips_.load();
         checkpoint_info_.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
+        
+        // 保存 IP 的 uint32 形式用于快速断点恢复
+        if (!last_processed_ip.empty() && is_valid_ip_address(last_processed_ip)) {
+            try {
+                checkpoint_info_.last_processed_ip_uint = boost::asio::ip::make_address_v4(last_processed_ip).to_uint();
+            } catch (...) {
+                checkpoint_info_.last_processed_ip_uint = 0;
+            }
+        }
 
         auto now_time = std::chrono::system_clock::now();
         auto time_t = std::chrono::system_clock::to_time_t(now_time);

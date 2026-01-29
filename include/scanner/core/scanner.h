@@ -238,7 +238,8 @@ size_t stream_domains_with_offset(
 size_t stream_domains_with_offset_uint(
     const std::string& path,
     size_t file_offset,
-    const std::function<bool(uint32_t, size_t)>& handle_target
+    const std::function<bool(uint32_t, size_t)>& handle_target,
+    uint32_t skip_until = 0  // 跳过小于此值的所有IP（用于快速断点恢复）
 );
 
 // 检查是否是有效的 IP 地址

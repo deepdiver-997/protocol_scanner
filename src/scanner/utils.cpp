@@ -37,14 +37,20 @@ static inline std::string trim(const std::string& s) {
 
 // 辅助函数：将 CIDR 记号扩展为单个 IP（流式输出 uint32，避免字符串创建）
 static bool expand_cidr_stream_uint(const std::string& cidr_str,
-                                    const std::function<bool(uint32_t)>& emit) {
+                                    const std::function<bool(uint32_t)>& emit,
+                                    uint32_t skip_until = 0) {
     try {
         std::string cidr_trimmed = trim(cidr_str);
         size_t slash_pos = cidr_trimmed.find('/');
         if (slash_pos == std::string::npos) {
             if (is_valid_ip_internal(cidr_trimmed)) {
                 auto addr = boost::asio::ip::make_address_v4(cidr_trimmed);
-                return emit(addr.to_uint());
+                uint32_t ip_uint = addr.to_uint();
+                // 快速跳过：如果这个IP小于断点IP，直接跳过
+                if (skip_until > 0 && ip_uint < skip_until) {
+                    return true;
+                }
+                return emit(ip_uint);
             }
             return true;
         }
@@ -74,6 +80,18 @@ static bool expand_cidr_stream_uint(const std::string& cidr_str,
             broadcast_addr = network_addr + MAX_EXPANSION - 1;
         }
 
+        // 快速跳过整个CIDR段或段内部分IP
+        if (skip_until > 0) {
+            if (broadcast_addr < skip_until) {
+                // 整个段都要跳过，直接返回
+                return true;
+            }
+            // 从断点IP开始（而不是从network_addr开始）
+            if (network_addr < skip_until) {
+                network_addr = skip_until;
+            }
+        }
+
         // 直接传递 uint32，完全避免字符串创建
         for (uint32_t i = network_addr; i <= broadcast_addr; ++i) {
             if (!emit(i)) {
@@ -97,7 +115,8 @@ static bool expand_cidr_stream(const std::string& cidr_str,
 // 辅助函数：将 IP 段扩展为单个 IP（流式输出 uint32，避免字符串创建）
 static bool expand_ip_range_stream_uint(const std::string& start_ip_str,
                                         const std::string& end_ip_str,
-                                        const std::function<bool(uint32_t)>& emit) {
+                                        const std::function<bool(uint32_t)>& emit,
+                                        uint32_t skip_until = 0) {
     try {
         auto start_addr = boost::asio::ip::make_address_v4(trim(start_ip_str));
         auto end_addr = boost::asio::ip::make_address_v4(trim(end_ip_str));
@@ -111,6 +130,18 @@ static bool expand_ip_range_stream_uint(const std::string& start_ip_str,
         if (end_uint - start_uint > MAX_EXPANSION) {
             // 静默截断
             end_uint = start_uint + MAX_EXPANSION;
+        }
+
+        // 快速跳过整个段或段内部分IP
+        if (skip_until > 0) {
+            if (end_uint < skip_until) {
+                // 整个段都要跳过，直接返回
+                return true;
+            }
+            // 从断点IP开始（而不是从start_uint开始）
+            if (start_uint < skip_until) {
+                start_uint = skip_until;
+            }
         }
 
         // 直接传递 uint32，完全避免字符串创建
@@ -210,7 +241,8 @@ static size_t process_file_stream_with_offset(
     const std::string& filename,
     size_t file_offset,
     const std::function<bool(const std::string&, size_t)>& handle_target,
-    bool& aborted
+    bool& aborted,
+    uint32_t skip_until = 0  // 新增：跳过小于此值的所有IP
 ) {
     std::ifstream in(filename);
     if (!in) {
@@ -260,7 +292,7 @@ static size_t process_file_stream_with_offset(
                 }
                 ++emitted;
                 return true;
-            });
+            }, skip_until);  // 传递 skip_until 参数
             if (!ok) return emitted;
             continue;
         }
@@ -278,7 +310,7 @@ static size_t process_file_stream_with_offset(
                     }
                     ++emitted;
                     return true;
-                });
+                }, skip_until);  // 传递 skip_until 参数
                 if (!ok) return emitted;
                 continue;
             }
@@ -360,7 +392,8 @@ size_t stream_domains_with_offset(
 size_t stream_domains_with_offset_uint(
     const std::string& path,
     size_t file_offset,
-    const std::function<bool(uint32_t, size_t)>& handle_target
+    const std::function<bool(uint32_t, size_t)>& handle_target,
+    uint32_t skip_until
 ) {
     size_t total = 0;
     bool aborted = false;
@@ -386,11 +419,11 @@ size_t stream_domains_with_offset_uint(
             LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
                 if (!entry.is_regular_file()) continue;
-                total += process_file_stream_with_offset(entry.path().string(), 0, string_handler, aborted);
+                total += process_file_stream_with_offset(entry.path().string(), 0, string_handler, aborted, skip_until);
                 if (aborted) break;
             }
         } else if (fs::is_regular_file(path)) {
-            total = process_file_stream_with_offset(path, file_offset, string_handler, aborted);
+            total = process_file_stream_with_offset(path, file_offset, string_handler, aborted, skip_until);
         } else {
             LOG_FILE_IO_ERROR("Path not found or invalid: {}", path);
         }
