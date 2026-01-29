@@ -106,6 +106,28 @@ void Scanner::start(const std::string& source_path) {
     input_done_ = false;
     input_source_path_ = source_path;
 
+    // 【自动配置优化】配置值为0时，根据系统资源自动计算最优值
+    // 此时配置文件和命令行参数都已合并完成
+    if (config_.max_work_count == 0) {
+        // 根据线程数估算：每个IO线程可维持250-500个并发连接
+        int io_threads = config_.io_thread_count > 0 ? config_.io_thread_count : config_.thread_count;
+        config_.max_work_count = std::max(500, io_threads * 300);
+        LOG_CORE_INFO("Auto-configured max_work_count: {} (based on {} IO threads)", 
+                     config_.max_work_count, io_threads);
+    }
+    
+    if (config_.targets_max_size == 0) {
+        // targets队列大小：至少是max_work_count的2倍，保证input线程不会被阻塞
+        config_.targets_max_size = std::max(size_t(5000), config_.max_work_count * 3);
+        LOG_CORE_INFO("Auto-configured targets_max_size: {}", config_.targets_max_size);
+    }
+    
+    if (config_.result_queue_max_size == 0) {
+        // 结果队列：通常max_work_count的一半即可
+        config_.result_queue_max_size = std::max(size_t(500), config_.max_work_count / 2);
+        LOG_CORE_INFO("Auto-configured result_queue_max_size: {}", config_.result_queue_max_size);
+    }
+
     // 初始化厂商检测（内部封装，不再由 main 管理）
     vendor_detector_.reset();
     vendor_pattern_path_.clear();
@@ -208,6 +230,7 @@ void Scanner::start(const std::string& source_path) {
 
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
     try {
+        LOG_CORE_INFO("[input_thread] Starting to parse: {}", source_path);
         size_t loaded_count = 0;
         size_t skipped_count = 0;  // 记录跳过的数量
         size_t input_offset = has_checkpoint ? checkpoint_info_.input_file_offset : 0;
@@ -238,7 +261,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         }
 
         // 【关键优化】直接接受 uint32，完全避免字符串转换开销
-        auto enqueue_target_uint = [this, &loaded_count, &skip_mode, &skip_until_uint, &skipped_count, &skip_until_ip](uint32_t ip_uint, size_t source_offset) -> bool {
+        auto enqueue_target_uint = [this, &loaded_count, &skip_mode, &skip_until_uint, &skipped_count](uint32_t ip_uint, size_t source_offset) -> bool {
             if (stop_) return false;
 
             // 【高速路径】使用纯数值比较，零字符串创建
@@ -246,9 +269,12 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                 if (skip_until_uint > 0) {
                     if (ip_uint == skip_until_uint) {
                         skip_mode = false;
-                        LOG_CORE_INFO("Resumed from checkpoint: {} (skipped {} IPs)", skip_until_ip, skipped_count);
+                        LOG_CORE_INFO("Resumed from checkpoint: IP uint {} (skipped {} IPs)", skip_until_uint, skipped_count);
                     } else if (ip_uint < skip_until_uint) {
                         skipped_count++;
+                        if (skipped_count % 10000 == 0) {
+                            LOG_CORE_INFO("Skipping: current={} target={} skipped={}", ip_uint, skip_until_uint, skipped_count);
+                        }
                         return true;  // 跳过，不创建字符串
                     } else {
                         LOG_CORE_WARN("IP uint {} exceeds checkpoint {}, starting from here", ip_uint, skip_until_uint);
@@ -273,12 +299,21 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             lock.unlock();
             targets_cv_.notify_one();
             ++loaded_count;
+            
+            // 【诊断日志】每1000个IP打印一次进度
+            if (loaded_count % 1000 == 0) {
+                LOG_CORE_INFO("[input_thread] Loaded {} targets, queue_size={}", loaded_count, targets_.size());
+            }
+            
             return true;
         };
 
         // blocking call, will return after all targets are loaded
         // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
+        LOG_CORE_INFO("[input_thread] Calling stream_domains_with_offset_uint, offset={}, skip_until={}", 
+                     input_offset, skip_until_uint);
         stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
+        LOG_CORE_INFO("[input_thread] Completed: loaded {} targets", loaded_count);
 
         // 计算总目标数：如果是从断点恢复，总数 = 本轮加载 + 之前累计处理
         if (has_checkpoint) {
@@ -524,7 +559,7 @@ void Scanner::scan_loop() {
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
 
     // 预分配 sessions_ 以减少重分配开销
-    sessions_.reserve(std::min(config_.max_work_count, size_t(1000)));
+    sessions_.reserve(std::min(config_.max_work_count, size_t(10000)));
 
     // 内存监控：记录容器大小以便诊断内存问题
     auto last_mem_log = std::chrono::steady_clock::now();
@@ -563,39 +598,22 @@ void Scanner::scan_loop() {
 
     // 【新优化】根据负载动态计算睡眠时间，避免固定 5ms 导致过多的 clock_nanosleep 调用
     auto calculate_adaptive_sleep = [](int active_sessions, int idle_count, int quota_used, int total_sessions, bool has_targets) -> std::chrono::milliseconds {
-        // 策略：高负载 → 短睡眠（1-3ms），低负载 → 长睡眠（8-20ms）
+        // 【关键修复】之前的逻辑太保守，导致input_thread被阻塞
+        // 新策略：只要有targets待处理，就保持高频率消费（1-2ms）
         
-        // 1. 活跃会话比率（0.0 - 1.0）
-        double active_ratio = total_sessions > 0 ? static_cast<double>(active_sessions) / total_sessions : 0.0;
-        
-        // 2. 基于活跃率和任务状态动态调整
-        int base_sleep_ms = 5;  // 默认基准
-        
-        if (active_ratio > 0.8 && has_targets) {
-            // 高负载：80%+ 活跃 session 且有待扫描任务
-            base_sleep_ms = 1;
-        } else if (active_ratio > 0.5 && has_targets) {
-            // 中高负载：50-80% 活跃
-            base_sleep_ms = 2;
-        } else if (active_ratio > 0.2) {
-            // 中负载：20-50% 活跃
-            base_sleep_ms = 5;
-        } else if (active_sessions > 0) {
-            // 低负载：还有活跃但很少
-            base_sleep_ms = 8;
-        } else {
-            // 极低负载：无活跃 session（等待新任务或即将结束）
-            base_sleep_ms = has_targets ? 10 : 15;
+        if (has_targets) {
+            // 有待扫描目标 → 保持高频率消费
+            return std::chrono::milliseconds(1);
         }
         
-        // 3. quota_used 修正（如果 quota 很快用完，说明任务提交很饱和）
-        if (quota_used >= 50) {
-            base_sleep_ms = std::max(1, base_sleep_ms - 2);  // 高提交率，缩短睡眠
-        } else if (quota_used < 5) {
-            base_sleep_ms = std::min(20, base_sleep_ms + 5);  // 低提交率，延长睡眠
+        // 无待扫描目标，根据活跃会话数调整
+        if (active_sessions > 0) {
+            // 还有活跃会话在运行 → 中等频率
+            return std::chrono::milliseconds(3);
         }
         
-        return std::chrono::milliseconds(base_sleep_ms);
+        // 无待扫描目标且无活跃会话 → 可能即将结束
+        return std::chrono::milliseconds(10);
     };
 
     while (true) {
@@ -640,6 +658,20 @@ void Scanner::scan_loop() {
             out = std::move(targets_.back());
             targets_.pop_back();
             return true;
+        };
+
+        auto fetch_targets_batch = [this](std::vector<ScanTarget>& out, int max_count) -> int {
+            std::lock_guard<std::mutex> lock(targets_mutex_);
+            int count = 0;
+            while (count < max_count && !targets_.empty()) {
+                out.push_back(std::move(targets_.back()));
+                targets_.pop_back();
+                count++;
+            }
+            if (count > 0) {
+                targets_cv_.notify_one();
+            }
+            return count;
         };
 
         // 单次遍历：复用已完成 + 分配任务 + 统计状态
@@ -692,15 +724,23 @@ void Scanner::scan_loop() {
             if (quota == 0) break;
         }
 
-        // 如果还有配额，查找 idle session 进行复用或创建新的
+        // 【批量优化】一次性批量获取多个targets，减少锁竞争
         int max_sessions = config_.max_work_count > 0
             ? static_cast<int>(config_.max_work_count)
             : std::max(1, config_.batch_size);
 
-        while (quota > 0) {
-            ScanTarget t;
-            if (!fetch_target(t)) {
-                break;
+        // 批量获取targets（一次最多取quota个，避免过度占用）
+        std::vector<ScanTarget> batch_targets;
+        batch_targets.reserve(std::min(quota, 50));  // 每批最多50个，避免一次取太多
+        fetch_targets_batch(batch_targets, std::min(quota, 50));
+        
+        // 批量分配targets到session
+        for (auto& t : batch_targets) {
+            if (quota == 0) {
+                // 配额用完，剩余的放回队列
+                std::lock_guard<std::mutex> lock(targets_mutex_);
+                targets_.push_back(std::move(t));
+                continue;
             }
 
             // 检查最大并发会话数
@@ -756,6 +796,16 @@ void Scanner::scan_loop() {
         if (all_done) {
             break;
         }
+
+        // 【诊断日志】每100次循环打印一次状态
+        // static int loop_count = 0;
+        // if (++loop_count % 100 == 0) {
+        //     size_t targets_size = 0;
+        //     {
+        //         std::lock_guard<std::mutex> lock(targets_mutex_);
+        //         targets_size = targets_.size();
+        //     }
+        // }
 
         // 【优化】动态睡眠时间：根据负载自适应调整，避免固定 5ms 导致过多 clock_nanosleep 开销
         int quota_used = initial_quota - quota;

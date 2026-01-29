@@ -89,10 +89,10 @@ struct ScanTarget {
     std::string domain;         // 域名（对于纯 IP 扫描，domain == ip 字符串化结果）
     size_t source_offset = 0;  // 输入文件行起始偏移（用于断点恢复加速）
     
-    // 【优化】惰性字符串化：只在需要时才生成 IP 字符串
-    std::string get_ip_string() const {
-        if (ip_uint == 0) return "";
-        return boost::asio::ip::make_address_v4(ip_uint).to_string();
+    // 【关键优化】直接返回缓存的domain字段，避免每次都创建临时字符串
+    // domain字段在set_ip时已经设置为IP字符串，无需重新转换
+    const std::string& get_ip_string() const {
+        return domain;
     }
     
     // 设置 IP（同时设置 uint32 和 domain）
