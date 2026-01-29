@@ -160,7 +160,7 @@ void Scanner::start(const std::string& source_path) {
     // 【优化】按实际需要动态扩展，初始预留少一点
     {
         std::lock_guard<std::mutex> lock(targets_mutex_);
-        targets_.reserve(std::min(config_.batch_size * 2, size_t(2000)));
+        targets_.reserve(std::min(static_cast<size_t>(config_.batch_size * 2), size_t(2000)));
     }
     
     // 启动三个线程
