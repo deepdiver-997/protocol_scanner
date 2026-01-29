@@ -291,7 +291,7 @@ int ScanSession::start_all_pending_probes(
     }
 
     // 缓存 target 文本（域名优先，否则 IP）
-    const std::string& target_name = target_.domain.empty() ? ip : target_.domain;
+    const std::string target_name = target_.domain.empty() ? ip : target_.domain;
 
     // 构建协议映射，避免每次循环线性查找
     std::unordered_map<std::string, IProtocol*> proto_map;

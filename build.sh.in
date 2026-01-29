@@ -40,14 +40,29 @@ platform_hint() {
     echo "$msg"
 }
 
+echo ""
 echo "========================================="
 echo "Protocol Scanner Build Script"
 echo "========================================="
 echo "Build Type: $BUILD_TYPE"
+echo "  Release       - Performance mode, minimal logging"
+echo "  InfoRelease   - Performance mode, INFO+ERROR logging (production)"  
+echo "  Debug         - Debug symbols, all logging"
 echo "Clean Build: $CLEAN_BUILD"
 echo "Build Dir: $BUILD_DIR"
 echo "Generator: ${GENERATOR:-auto}"
 echo ""
+
+# Validate build type
+case "$BUILD_TYPE" in
+    Debug|Release|InfoRelease)
+        ;;
+    *)
+        echo "Error: Invalid build type '$BUILD_TYPE'"
+        echo "Allowed values: Debug, Release, InfoRelease"
+        exit 1
+        ;;
+esac
 
 if [ "$CLEAN_BUILD" = "true" ] || [ "$CLEAN_BUILD" = "clean" ]; then
     echo "Cleaning build directory..."
@@ -82,9 +97,20 @@ echo "Build completed"
 echo "========================================="
 echo "Executable: $BUILD_DIR/scanner"
 echo ""
-echo "Usage:"
+echo "Usage Examples:"
+echo "  # Standard build (Release - no logging)"
+echo "  ./build.sh Release"
+echo ""
+echo "  # Production build with monitoring (INFO + ERROR logs)"
+echo "  ./build.sh InfoRelease"
+echo ""
+echo "  # Debug build (all logging + symbols)"
+echo "  ./build.sh Debug"
+echo ""
+echo "  # Clean rebuild"
+echo "  ./build.sh Release clean"
+echo ""
+echo "Running:"
 echo "  $BUILD_DIR/scanner --help"
 echo "  $BUILD_DIR/scanner --domains domains.txt --scan"
 echo ""
-echo "Tip: disable logging at build time with:"
-echo "  EXTRA_CMAKE_ARGS=\"-DENABLE_LOGGING=OFF\" ./build.sh"

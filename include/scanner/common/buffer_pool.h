@@ -154,10 +154,10 @@ private:
 // =====================
 // 全局缓冲池（单例）
 // =====================
-inline BufferPool& get_global_buffer_pool() {
+inline BufferPool& get_global_buffer_pool(int max_size = 3000) {
     // 根据配置的 max_work_count 调整池大小
     // 默认 3000 (假设每个连接需要1个缓冲区)
-    static BufferPool pool(3000);
+    static BufferPool pool(max_size);
     return pool;
 }
 

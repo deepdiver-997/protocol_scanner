@@ -319,6 +319,16 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
 #define ENABLE_PORT_SCAN_DEBUG_LOG 0
 #define ENABLE_FILE_IO_DEBUG_LOG 0
 
+// 构建时条件：编译时检查是否启用INFO日志
+// Release 模式: 不启用任何日志（编译时优化掉）
+// InfoRelease 模式: 启用 INFO 和 ERROR 日志（ENABLE_LOGGING_INFO 由 CMake 定义）
+// Debug 模式: 启用所有日志
+#ifdef ENABLE_LOGGING_INFO
+    #define ENABLE_INFO_LOGGING 1
+#else
+    #define ENABLE_INFO_LOGGING 0
+#endif
+
 // ==================== 模块化日志宏定义 ====================
 
 // CORE 模块日志
@@ -331,7 +341,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::CORE)->debug(__VA_ARGS__); \
     }
 #define LOG_CORE_INFO(...) \
-    scanner::log(scanner::LogModule::CORE)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::CORE)->info(__VA_ARGS__); \
+    }
 #define LOG_CORE_WARN(...) \
     scanner::log(scanner::LogModule::CORE)->warn(__VA_ARGS__)
 #define LOG_CORE_ERROR(...) \
@@ -349,7 +361,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::DNS)->debug(__VA_ARGS__); \
     }
 #define LOG_DNS_INFO(...) \
-    scanner::log(scanner::LogModule::DNS)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::DNS)->info(__VA_ARGS__); \
+    }
 #define LOG_DNS_WARN(...) \
     scanner::log(scanner::LogModule::DNS)->warn(__VA_ARGS__)
 #define LOG_DNS_ERROR(...) \
@@ -367,7 +381,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::NETWORK)->debug(__VA_ARGS__); \
     }
 #define LOG_NETWORK_INFO(...) \
-    scanner::log(scanner::LogModule::NETWORK)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::NETWORK)->info(__VA_ARGS__); \
+    }
 #define LOG_NETWORK_WARN(...) \
     scanner::log(scanner::LogModule::NETWORK)->warn(__VA_ARGS__)
 #define LOG_NETWORK_ERROR(...) \
@@ -385,7 +401,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::SMTP)->debug(__VA_ARGS__); \
     }
 #define LOG_SMTP_INFO(...) \
-    scanner::log(scanner::LogModule::SMTP)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::SMTP)->info(__VA_ARGS__); \
+    }
 #define LOG_SMTP_WARN(...) \
     scanner::log(scanner::LogModule::SMTP)->warn(__VA_ARGS__)
 #define LOG_SMTP_ERROR(...) \
@@ -403,7 +421,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::POP3)->debug(__VA_ARGS__); \
     }
 #define LOG_POP3_INFO(...) \
-    scanner::log(scanner::LogModule::POP3)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::POP3)->info(__VA_ARGS__); \
+    }
 #define LOG_POP3_WARN(...) \
     scanner::log(scanner::LogModule::POP3)->warn(__VA_ARGS__)
 #define LOG_POP3_ERROR(...) \
@@ -421,7 +441,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::IMAP)->debug(__VA_ARGS__); \
     }
 #define LOG_IMAP_INFO(...) \
-    scanner::log(scanner::LogModule::IMAP)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::IMAP)->info(__VA_ARGS__); \
+    }
 #define LOG_IMAP_WARN(...) \
     scanner::log(scanner::LogModule::IMAP)->warn(__VA_ARGS__)
 #define LOG_IMAP_ERROR(...) \
@@ -439,7 +461,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::HTTP)->debug(__VA_ARGS__); \
     }
 #define LOG_HTTP_INFO(...) \
-    scanner::log(scanner::LogModule::HTTP)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::HTTP)->info(__VA_ARGS__); \
+    }
 #define LOG_HTTP_WARN(...) \
     scanner::log(scanner::LogModule::HTTP)->warn(__VA_ARGS__)
 #define LOG_HTTP_ERROR(...) \
@@ -457,7 +481,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::VENDOR)->debug(__VA_ARGS__); \
     }
 #define LOG_VENDOR_INFO(...) \
-    scanner::log(scanner::LogModule::VENDOR)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::VENDOR)->info(__VA_ARGS__); \
+    }
 #define LOG_VENDOR_WARN(...) \
     scanner::log(scanner::LogModule::VENDOR)->warn(__VA_ARGS__)
 #define LOG_VENDOR_ERROR(...) \
@@ -475,7 +501,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::OUTPUT)->debug(__VA_ARGS__); \
     }
 #define LOG_OUTPUT_INFO(...) \
-    scanner::log(scanner::LogModule::OUTPUT)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::OUTPUT)->info(__VA_ARGS__); \
+    }
 #define LOG_OUTPUT_WARN(...) \
     scanner::log(scanner::LogModule::OUTPUT)->warn(__VA_ARGS__)
 #define LOG_OUTPUT_ERROR(...) \
@@ -493,7 +521,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::PORT_SCAN)->debug(__VA_ARGS__); \
     }
 #define LOG_PORT_SCAN_INFO(...) \
-    scanner::log(scanner::LogModule::PORT_SCAN)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::PORT_SCAN)->info(__VA_ARGS__); \
+    }
 #define LOG_PORT_SCAN_WARN(...) \
     scanner::log(scanner::LogModule::PORT_SCAN)->warn(__VA_ARGS__)
 #define LOG_PORT_SCAN_ERROR(...) \
@@ -511,7 +541,9 @@ inline void set_module_log_level(LogModule module, spdlog::level::level_enum lev
         scanner::log(scanner::LogModule::FILE_IO)->debug(__VA_ARGS__); \
     }
 #define LOG_FILE_IO_INFO(...) \
-    scanner::log(scanner::LogModule::FILE_IO)->info(__VA_ARGS__)
+    if constexpr (ENABLE_INFO_LOGGING) { \
+        scanner::log(scanner::LogModule::FILE_IO)->info(__VA_ARGS__); \
+    }
 #define LOG_FILE_IO_WARN(...) \
     scanner::log(scanner::LogModule::FILE_IO)->warn(__VA_ARGS__)
 #define LOG_FILE_IO_ERROR(...) \

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Protocol Scanner 通用构建脚本（依赖提示 + CMake 驱动）
+# 支持模式：Debug / Release（无日志）/ InfoRelease（仅INFO/ERROR日志）
 
 set -euo pipefail
 
@@ -10,6 +11,12 @@ GENERATOR=${CMAKE_GENERATOR:-}
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BUILD_DIR=${BUILD_DIR:-${SCRIPT_DIR}/build}
+
+# 验证构建类型
+if [[ ! "$BUILD_TYPE" =~ ^(Debug|Release|InfoRelease)$ ]]; then
+    echo "Error: BUILD_TYPE must be Debug, Release, or InfoRelease"
+    exit 1
+fi
 
 cpu_count() {
     if command -v getconf >/dev/null 2>&1; then
@@ -48,6 +55,18 @@ echo "Clean Build: $CLEAN_BUILD"
 echo "Build Dir: $BUILD_DIR"
 echo "Generator: ${GENERATOR:-auto}"
 echo ""
+
+# 为 InfoRelease 设置额外参数
+if [ "$BUILD_TYPE" = "InfoRelease" ]; then
+    EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DENABLE_LOGGING=ON -DLOG_LEVEL_INFO=ON"
+    # 使用 Release 编译优化，但保留 INFO/ERROR 日志
+    BUILD_TYPE="Release"
+    echo "Note: InfoRelease builds with Release optimizations and INFO/ERROR logging enabled"
+    echo ""
+elif [ "$BUILD_TYPE" = "Release" ]; then
+    # 默认 Release 关闭日志
+    EXTRA_CMAKE_ARGS="${EXTRA_CMAKE_ARGS} -DENABLE_LOGGING=OFF"
+fi
 
 if [ "$CLEAN_BUILD" = "true" ] || [ "$CLEAN_BUILD" = "clean" ]; then
     echo "Cleaning build directory..."

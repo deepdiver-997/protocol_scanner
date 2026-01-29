@@ -112,6 +112,8 @@ void Scanner::start(const std::string& source_path) {
         // 根据线程数估算：每个IO线程可维持250-500个并发连接
         int io_threads = config_.io_thread_count > 0 ? config_.io_thread_count : config_.thread_count;
         config_.max_work_count = std::max(500, io_threads * 300);
+        // init_global_buffer_pool 需要这个值来初始化缓冲池大小
+        get_global_buffer_pool(config_.max_work_count);
         LOG_CORE_INFO("Auto-configured max_work_count: {} (based on {} IO threads)", 
                      config_.max_work_count, io_threads);
     }
@@ -622,6 +624,8 @@ void Scanner::scan_loop() {
         
         // 每10秒记录一次内存状态（用于诊断内存占用问题）
         if (std::chrono::duration_cast<std::chrono::seconds>(loop_now - last_mem_log).count() >= 10) {
+            // Only compute these if INFO logging is enabled
+            #ifdef ENABLE_LOGGING_INFO
             size_t pending_sessions = 0;
             for (auto& s : sessions_) {
                 if (s && !s->is_idle() && s->tasks_completed() < s->tasks_total()) {
@@ -630,18 +634,27 @@ void Scanner::scan_loop() {
             }
             
             // 获取内存池统计
-            auto pool_stats = get_global_buffer_pool().get_stats();
+            const auto pool_stats = get_global_buffer_pool().get_stats();
+            #endif
             
             LOG_CORE_INFO(
                 "[Memory] sessions_total={} sessions_pending={} targets_queue={} result_queue={} | "
                 "[BufferPool] size={} available={} hit_rate={:.2f}%",
                 sessions_.size(),
+                #ifdef ENABLE_LOGGING_INFO
                 pending_sessions,
+                #else
+                0,
+                #endif
                 targets_.size(),
                 result_queue_.size(),
+                #ifdef ENABLE_LOGGING_INFO
                 pool_stats.pool_size,
                 pool_stats.available,
                 pool_stats.hit_rate * 100.0
+                #else
+                0, 0, 0.0
+                #endif
             );
             last_mem_log = loop_now;
         }

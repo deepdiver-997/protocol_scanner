@@ -5,7 +5,7 @@ project(protocol_scanner LANGUAGES CXX VERSION 1.0.0)
 # 构建配置
 # =====================
 if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build: Debug/Release" FORCE)
+    set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build: Debug/Release/InfoRelease" FORCE)
 endif()
 message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 
@@ -16,20 +16,33 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Debug/Release 模式编译器优化
 set(CMAKE_CXX_FLAGS_DEBUG "-O0 -g -DDEBUG -fno-omit-frame-pointer" CACHE STRING "Flags used by C++ compiler during DEBUG builds" FORCE)
-set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native" CACHE STRING "Flags used by C++ compiler during RELEASE builds" FORCE)
+
+# Release 版本默认优化（不使用 LTO 以减少编译时间和警告）
+if(UNIX AND NOT APPLE)
+    # Linux 特定优化：-fno-plt 加速 PIC 代码、-mtune 针对通用 CPU、-pipe 使用管道而非文件
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -mtune=generic -fno-plt -pipe" CACHE STRING "Flags used by C++ compiler during RELEASE builds" FORCE)
+    # InfoRelease: Release优化 + 保留INFO日志（生产环境)
+    set(CMAKE_CXX_FLAGS_INFORELEASE "-O3 -DNDEBUG -DENABLE_LOGGING_INFO -mtune=generic -fno-plt -pipe" CACHE STRING "Flags used by C++ compiler during INFORELEASE builds" FORCE)
+else()
+    # macOS 和其他系统
+    set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -march=native" CACHE STRING "Flags used by C++ compiler during RELEASE builds" FORCE)
+    # InfoRelease: Release优化 + 保留INFO日志（生产环境)
+    set(CMAKE_CXX_FLAGS_INFORELEASE "-O3 -DNDEBUG -DENABLE_LOGGING_INFO -march=native" CACHE STRING "Flags used by C++ compiler during INFORELEASE builds" FORCE)
+endif()
 
 # 全局编译选项
 add_compile_options(-Wall -Wextra -Wno-unused-parameter)
+# 禁用 clang pragma 警告（GCC 会忽略未知的 pragma，但不会警告）
+add_compile_options($<$<CXX_COMPILER_ID:GNU>:-Wno-unknown-pragmas>)
 
 # 在 Clang/GCC 下开启彩色诊断
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang" OR CMAKE_CXX_COMPILER_ID MATCHES "GNU")
     add_compile_options(-fdiagnostics-color=auto)
 endif()
 
-# 性能优化开关
+# 性能优化开关（禁用 LTO，减少编译警告和时间）
 option(ENABLE_PERFORMANCE_MODE "Enable performance optimizations" ON)
 if(ENABLE_PERFORMANCE_MODE)
-    add_compile_options(-flto)
     add_definitions(-DENABLE_INLINE_PROTOCOLS)
 endif()
 

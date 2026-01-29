@@ -9,6 +9,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <memory>
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -37,11 +38,17 @@ std::string time_string_utc() {
     return ss.str();
 }
 
+}  // namespace
+
+}  // namespace
+
+#if defined(__linux__)
+
+// Linux-specific utilities for extended diagnostics
+namespace {
+
 // Execute a shell command and capture its stdout, limiting output size.
-// Returns empty string on failure or timeout.
 std::string exec_command(const std::string& cmd, std::size_t max_output = 8192) {
-    // Use bash with timeout; redirect stderr to /dev/null to avoid noise
-    // Escape double quotes in cmd to avoid injection
     std::string escaped_cmd = cmd;
     size_t pos = 0;
     while ((pos = escaped_cmd.find('"', pos)) != std::string::npos) {
@@ -51,9 +58,7 @@ std::string exec_command(const std::string& cmd, std::size_t max_output = 8192) 
     
     std::string wrapped_cmd = "timeout 2s bash -c \"" + escaped_cmd + "\" 2>/dev/null";
     FILE* pipe = popen(wrapped_cmd.c_str(), "r");
-    if (!pipe) {
-        return "";
-    }
+    if (!pipe) return "";
 
     std::string result;
     result.reserve(std::min(max_output, std::size_t(4096)));
@@ -75,16 +80,13 @@ std::string exec_command(const std::string& cmd, std::size_t max_output = 8192) 
 // Get current process name from /proc/self/comm
 std::string get_process_name() {
     auto comm = read_small_file("/proc/self/comm", 256);
-    // Trim trailing newline
     while (!comm.empty() && (comm.back() == '\n' || comm.back() == '\r')) {
         comm.pop_back();
     }
     return comm;
 }
 
-} // namespace
-
-#if defined(__linux__)
+}  // namespace
 
 class LinuxCrashInspector final : public CrashInspector {
 public:
@@ -132,9 +134,7 @@ public:
         if (!oom_adj.empty()) ofs << "oom_score_adj=" << oom_adj;
         ofs << "\n";
 
-        // --- Extended diagnostics via shell commands ---
-
-        // a. OOM Killer history from dmesg
+        // OOM Killer history from dmesg
         {
             auto oom_events = exec_command("dmesg -T | grep -iE '(killed process|out of memory|oom_reaper)' | tail -20");
             if (!oom_events.empty()) {
@@ -142,21 +142,18 @@ public:
             }
         }
 
-        // b. Systemd service exit history
+        // Systemd service exit history
         {
             std::string service_name = get_process_name();
             std::string journal_output;
             if (!service_name.empty()) {
-                // Try with service name first (common pattern: <name>.service)
                 std::string cmd = "journalctl -u " + service_name + ".service -n 30 --no-pager --output=short-precise 2>/dev/null | grep -E '(exit|killed|stopped|signal|code=)'";
                 journal_output = exec_command(cmd);
-                // If empty, try without .service suffix
                 if (journal_output.empty()) {
                     cmd = "journalctl -u " + service_name + " -n 30 --no-pager --output=short-precise 2>/dev/null | grep -E '(exit|killed|stopped|signal|code=)'";
                     journal_output = exec_command(cmd);
                 }
             }
-            // Fallback: query by current PID (won't find previous incarnation, but may help)
             if (journal_output.empty()) {
                 std::string pid_str = std::to_string(getpid());
                 std::string cmd = "journalctl _PID=" + pid_str + " -n 20 --no-pager 2>/dev/null";
@@ -167,7 +164,7 @@ public:
             }
         }
 
-        // c. Coredump history (coredumpctl may not be installed)
+        // Coredump history
         {
             auto coredumps = exec_command("coredumpctl list --no-pager --no-legend 2>/dev/null | tail -10");
             if (!coredumps.empty()) {
@@ -175,7 +172,7 @@ public:
             }
         }
 
-        // d. Memory pressure (PSI) - Linux 4.20+
+        // Memory pressure (PSI) - Linux 4.20+
         {
             if (fs::exists("/proc/pressure/memory")) {
                 auto psi = read_small_file("/proc/pressure/memory", 512);
@@ -185,7 +182,7 @@ public:
             }
         }
 
-        // e. Recent system reboots
+        // Recent system reboots
         {
             auto reboots = exec_command("last reboot 2>/dev/null | head -5");
             if (!reboots.empty()) {
@@ -199,8 +196,9 @@ public:
     }
 };
 
-#elif defined(__APPLE__)
+#else  // macOS and other platforms
 
+namespace scanner{
 class MacCrashInspector final : public CrashInspector {
 public:
     bool supported() const override { return true; }
@@ -210,8 +208,13 @@ public:
         if (!fs::exists(progress_file)) {
             return false;
         }
+        std::error_code ec;
+        fs::create_directories(fs::path(diag_output_file).parent_path(), ec);
+        
         std::ofstream ofs(diag_output_file, std::ios::app);
-        if (!ofs) return false;
+        if (!ofs) {
+            return false;
+        }
         ofs << "=== startup inspection ===\n";
         ofs << "time: " << time_string_utc() << "\n";
         ofs << "progress_file: " << progress_file << "\n";
@@ -227,10 +230,8 @@ public:
 std::unique_ptr<CrashInspector> CrashInspector::create() {
 #if defined(__linux__)
     return std::make_unique<LinuxCrashInspector>();
-#elif defined(__APPLE__)
-    return std::make_unique<MacCrashInspector>();
 #else
-    return nullptr;
+    return std::make_unique<MacCrashInspector>();
 #endif
 }
 
