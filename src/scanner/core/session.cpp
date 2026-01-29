@@ -4,6 +4,7 @@
 #include "scanner/network/latency_manager.h"
 #include <atomic>
 #include <algorithm>
+#include <unordered_map>
 
 namespace scanner {
 
@@ -284,8 +285,27 @@ int ScanSession::start_all_pending_probes(
     // 这样可以减少 start_one_probe 的调用频率（从 7 次/session → 1 次）
     // 从而降低 scan_loop 中的遍历和 start_one_probe 的 CPU 热点
     
-    if (target_.get_ip_string().empty() || quota <= 0) {
+    const std::string& ip = target_.get_ip_string();
+    if (ip.empty() || quota <= 0) {
         return 0;
+    }
+
+    // 缓存 target 文本（域名优先，否则 IP）
+    const std::string& target_name = target_.domain.empty() ? ip : target_.domain;
+
+    // 构建协议映射，避免每次循环线性查找
+    std::unordered_map<std::string, IProtocol*> proto_map;
+    proto_map.reserve(protocols.size());
+    for (const auto& p : protocols) {
+        if (p) {
+            proto_map.emplace(p->name(), p.get());
+        }
+    }
+
+    // 计算一次动态超时（如全局为0时），避免重复调用
+    Timeout base_timeout = timeout;
+    if (base_timeout.count() == 0) {
+        base_timeout = LatencyManager::instance().get_timeout(ip);
     }
 
     int launched = 0;
@@ -308,11 +328,9 @@ int ScanSession::start_all_pending_probes(
 
         // 定位协议实例
         IProtocol* proto_ptr = nullptr;
-        for (const auto& p : protocols) {
-            if (p && p->name() == chosen_proto) {
-                proto_ptr = p.get();
-                break;
-            }
+        auto it = proto_map.find(chosen_proto);
+        if (it != proto_map.end()) {
+            proto_ptr = it->second;
         }
         if (!proto_ptr) {
             LOG_CORE_WARN("Protocol instance not found for {}", chosen_proto);
@@ -320,22 +338,17 @@ int ScanSession::start_all_pending_probes(
         }
 
         // 计算有效超时
-        Timeout effective_timeout = timeout;
-        if (effective_timeout.count() == 0) {
-            effective_timeout = LatencyManager::instance().get_timeout(target_.get_ip_string());
-        }
+        Timeout effective_timeout = base_timeout;
         Timeout proto_default = proto_ptr->default_timeout();
         if (proto_default > effective_timeout) {
             effective_timeout = proto_default;
         }
 
         // 提交任务到扫描线程池
-        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
-            const std::string& target = target_.domain.empty() ? target_.get_ip_string() : target_.domain;
-            
+        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout, target_name, ip]() {
             proto_ptr->async_probe(
-                target,
-                target_.get_ip_string(),
+                target_name,
+                ip,
                 port,
                 timeout,
                 exec,
