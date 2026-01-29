@@ -62,6 +62,7 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
         j["timestamp"] = info.timestamp;
         j["input_file_hash"] = info.input_file_hash;
         j["input_file_offset"] = info.input_file_offset;
+        j["last_processed_ip_uint"] = info.last_processed_ip_uint;  // 新增：保存 uint32 形式
         
         std::ofstream ofs(checkpoint_file_);
         if (!ofs) {
@@ -106,6 +107,7 @@ bool ProgressManager::load_checkpoint(CheckpointInfo& info) {
         info.timestamp = j.value("timestamp", "");
         info.input_file_hash = j.value("input_file_hash", "");
         info.input_file_offset = j.value("input_file_offset", 0);
+        info.last_processed_ip_uint = j.value("last_processed_ip_uint", 0);  // 新增：加载 uint32 形式
         last_loaded_processed_count_ = info.processed_count;
         
         LOG_CORE_INFO("Checkpoint loaded: {} (processed: {}, successful: {})", 

@@ -74,8 +74,8 @@ void Pop3Protocol::async_probe(
 
      ctx->socket.open(tcp::v4());
      asio::socket_base::reuse_address reuse_opt(true);
-     asio::socket_base::receive_buffer_size recv_buf(256 * 1024);
-     asio::socket_base::send_buffer_size send_buf(64 * 1024);
+     asio::socket_base::receive_buffer_size recv_buf(8 * 1024);   // 8 KB (sufficient for POP3 banner)
+     asio::socket_base::send_buffer_size send_buf(4 * 1024);      // 4 KB
      asio::ip::tcp::no_delay no_delay_opt(true);
      boost::system::error_code set_ec;
      ctx->socket.set_option(reuse_opt, set_ec);

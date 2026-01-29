@@ -15,6 +15,7 @@ struct CheckpointInfo {
     std::string timestamp;            // 时间戳
     std::string input_file_hash;      // 输入文件的 hash（防止混用）
     size_t input_file_offset = 0;     // 输入文件偏移（行起始位置，用于快速恢复）
+    uint32_t last_processed_ip_uint = 0; // 最后处理的 IP（数值形式，用于快速跳过）
 };
 
 // 进度管理器：负责保存和恢复断点信息
