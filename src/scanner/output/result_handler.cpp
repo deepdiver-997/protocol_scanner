@@ -25,7 +25,7 @@ std::string ResultHandler::to_text(const ScanReport& report) const {
 
     // 仅当有过滤后的协议结果时才输出目标行
     if (!filtered_protocols.empty()) {
-        oss << report.target.domain << " (" << report.target.ip << ")\n";
+        oss << report.target.domain << " (" << report.target.get_ip_string() << ")\n";
     }
 
     for (const auto& pr : filtered_protocols) {
@@ -67,16 +67,17 @@ std::string ResultHandler::to_required(const ScanReport& report) const {
         if (only_success_ && !pr.accessible) continue;
 
         size_t seq = 0;
-        auto it = ip_to_seq_.find(report.target.ip);
+        std::string current_ip = report.target.get_ip_string();
+        auto it = ip_to_seq_.find(current_ip);
         if (it != ip_to_seq_.end()) {
             seq = it->second;
         } else {
             seq = ++ip_seq_; // 新 IP 分配下一个序号
-            ip_to_seq_.emplace(report.target.ip, seq);
+            ip_to_seq_.emplace(current_ip, seq);
         }
 
         oss << seq << ','
-            << report.target.ip << ','
+            << current_ip << ','
             << pr.port << ','
             << pr.attrs.banner
             << '\n';
@@ -112,7 +113,7 @@ std::string ResultHandler::to_csv(const ScanReport& report) const {
             return '"' + r + '"';
         };
         oss << esc(report.target.domain) << ','
-            << esc(report.target.ip) << ','
+            << esc(report.target.get_ip_string()) << ','
             << esc(pr.protocol) << ','
             << esc(pr.host) << ','
             << pr.port << ','
@@ -150,7 +151,7 @@ std::string ResultHandler::to_csv(const std::vector<ScanReport>& reports) const 
 std::string ResultHandler::to_json(const ScanReport& report) const {
     nlohmann::json j;
     j["domain"] = report.target.domain;
-    j["ip"] = report.target.ip;
+    j["ip"] = report.target.get_ip_string();
     j["total_time_ms"] = report.total_time.count();
     j["protocols"] = nlohmann::json::array();
     for (const auto& pr : report.protocols) {
