@@ -478,13 +478,14 @@ bool CAresResolver::query_a_record(
         std::shared_ptr<std::pair<std::string, int>> data;
         std::shared_ptr<std::atomic<bool>> done;
         CAresResolver* resolver;  // 用于访问解析器
+        bool callback_called = false;  // 跟踪回调是否被调用
     };
 
     // 使用 shared_ptr 确保回调时内存仍然有效
     auto data = std::make_shared<std::pair<std::string, int>>();
     data->second = ARES_EDESTRUCTION;
 
-    auto* ctx_ptr = new AddrinfoCtx{data, done, this};
+    auto* ctx_ptr = new AddrinfoCtx{data, done, this, false};
 
     // 再次获取 channel，确保在创建回调时有效
     ares_channel query_channel = get_channel();
@@ -502,7 +503,19 @@ bool CAresResolver::query_a_record(
 
     ares_getaddrinfo(query_channel, domain.c_str(), nullptr, &hints, [](void* arg, int status, int /*timeouts*/, struct ares_addrinfo* result) {
         auto* ctx = static_cast<AddrinfoCtx*>(arg);
-        if (!ctx || !ctx->data) return;
+        if (!ctx) return;
+        
+        // 防御性检查：仅在回调中delete一次
+        if (ctx->callback_called) {
+            LOG_DNS_WARN("Duplicate callback invocation detected");
+            return;
+        }
+        ctx->callback_called = true;
+
+        if (!ctx->data) {
+            delete ctx;
+            return;
+        }
 
         ctx->data->second = status;
         
@@ -537,6 +550,7 @@ bool CAresResolver::query_a_record(
     if (!loop_ok) {
         LOG_DNS_WARN("A record query timeout or loop error for {}", domain);
         cancel_all_queries();
+        // 注意：在cancel后，回调可能仍会被调用，所以不在这里delete ctx_ptr
         return false;
     }
 
@@ -572,12 +586,13 @@ bool CAresResolver::query_mx_records(
         std::shared_ptr<std::pair<std::vector<DnsRecord>, int>> data;
         std::shared_ptr<std::atomic<bool>> done;
         CAresResolver* resolver;  // 用于访问解析器
+        bool callback_called = false;  // 防止重复delete
     };
 
     auto data = std::make_shared<std::pair<std::vector<DnsRecord>, int>>();
     data->second = ARES_EDESTRUCTION;
 
-    auto* ctx_ptr = new MxCtx{data, done, this};
+    auto* ctx_ptr = new MxCtx{data, done, this, false};
 
     // 再次获取 channel，确保在创建回调时有效
     ares_channel query_channel = get_channel();
@@ -589,7 +604,19 @@ bool CAresResolver::query_mx_records(
 
     auto callback = [](void* arg, int status, int /*timeouts*/, unsigned char* abuf, int alen) {
         auto* ctx = static_cast<MxCtx*>(arg);
-        if (!ctx || !ctx->data) return;
+        if (!ctx) return;
+        
+        // 防御性检查：仅在回调中delete一次
+        if (ctx->callback_called) {
+            LOG_DNS_WARN("Duplicate MX callback invocation detected");
+            return;
+        }
+        ctx->callback_called = true;
+
+        if (!ctx->data) {
+            delete ctx;
+            return;
+        }
 
         ctx->data->second = status;
         
@@ -633,6 +660,7 @@ bool CAresResolver::query_mx_records(
     if (!loop_ok) {
         LOG_DNS_WARN("MX query timeout or loop error for {}", domain);
         cancel_all_queries();
+        // 注意：在cancel后，回调可能仍会被调用，所以不在这里delete ctx_ptr
         return false;
     }
 

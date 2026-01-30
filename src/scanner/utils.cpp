@@ -107,7 +107,8 @@ static bool expand_cidr_stream_uint(const std::string& cidr_str,
 // 辅助函数：将 CIDR 记号扩展为单个 IP（字符串版本，供旧代码兼容）
 static bool expand_cidr_stream(const std::string& cidr_str,
                                const std::function<bool(const std::string&)>& emit) {
-    return expand_cidr_stream_uint(cidr_str, [&](uint32_t ip_uint) {
+    return expand_cidr_stream_uint(cidr_str, [&emit](uint32_t ip_uint) {
+        // 在调用点直接转换字符串，而不是在lambda内重复转换
         return emit(boost::asio::ip::make_address_v4(ip_uint).to_string());
     });
 }
@@ -160,7 +161,8 @@ static bool expand_ip_range_stream_uint(const std::string& start_ip_str,
 static bool expand_ip_range_stream(const std::string& start_ip_str,
                                    const std::string& end_ip_str,
                                    const std::function<bool(const std::string&)>& emit) {
-    return expand_ip_range_stream_uint(start_ip_str, end_ip_str, [&](uint32_t ip_uint) {
+    return expand_ip_range_stream_uint(start_ip_str, end_ip_str, [&emit](uint32_t ip_uint) {
+        // 在调用点直接转换字符串
         return emit(boost::asio::ip::make_address_v4(ip_uint).to_string());
     });
 }
