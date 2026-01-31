@@ -40,8 +40,6 @@ std::string time_string_utc() {
 
 }  // namespace
 
-}  // namespace
-
 #if defined(__linux__)
 
 // Linux-specific utilities for extended diagnostics
@@ -84,6 +82,86 @@ std::string get_process_name() {
         comm.pop_back();
     }
     return comm;
+}
+
+// Try to extract systemd unit name from /proc/self/cgroup
+std::string get_systemd_unit_from_cgroup() {
+    auto cgroup = read_small_file("/proc/self/cgroup", 1024);
+    if (cgroup.empty()) return "";
+    const std::string suffix = ".service";
+    auto pos = cgroup.find(suffix);
+    if (pos == std::string::npos) return "";
+    auto start = cgroup.rfind('/', pos);
+    if (start == std::string::npos) {
+        start = 0;
+    } else {
+        start += 1;
+    }
+    return cgroup.substr(start, pos - start + suffix.size());
+}
+
+std::string get_systemd_unit_name() {
+    auto unit = get_systemd_unit_from_cgroup();
+    if (!unit.empty()) return unit;
+    auto comm = get_process_name();
+    if (comm.empty()) return "";
+    return comm + ".service";
+}
+
+std::string trim(std::string s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == '\r' || s.back() == ' ' || s.back() == '\t')) {
+        s.pop_back();
+    }
+    std::size_t start = 0;
+    while (start < s.size() && (s[start] == ' ' || s[start] == '\t' || s[start] == '\n' || s[start] == '\r')) {
+        ++start;
+    }
+    if (start > 0) s.erase(0, start);
+    return s;
+}
+
+std::string get_value_from_systemctl_show(const std::string& output, const std::string& key) {
+    std::string prefix = key + "=";
+    std::size_t pos = output.find(prefix);
+    if (pos == std::string::npos) return "";
+    std::size_t end = output.find('\n', pos);
+    if (end == std::string::npos) end = output.size();
+    return trim(output.substr(pos + prefix.size(), end - (pos + prefix.size())));
+}
+
+std::string classify_stop_reason(const std::string& status_output, const std::string& recent_journal) {
+    auto result = get_value_from_systemctl_show(status_output, "Result");
+    auto code = get_value_from_systemctl_show(status_output, "ExecMainCode");
+    auto status = get_value_from_systemctl_show(status_output, "ExecMainStatus");
+    auto restarts = get_value_from_systemctl_show(status_output, "NRestarts");
+    bool has_restart = (!restarts.empty() && restarts != "0");
+
+    if (recent_journal.find("Stopped ") != std::string::npos ||
+        recent_journal.find("Stopping ") != std::string::npos) {
+        if (result == "success" && (code == "exited" || code == "0") && (status == "0" || status == "")) {
+            return "manual-stop likely";
+        }
+    }
+
+    if (recent_journal.find("Restarting") != std::string::npos ||
+        recent_journal.find("Scheduled restart job") != std::string::npos ||
+        recent_journal.find("restart job") != std::string::npos ||
+        (result == "watchdog" || result == "timeout" || result == "signal")) {
+        return "systemd-auto-restart likely";
+    }
+
+    if (has_restart) {
+        return "systemd-auto-restart likely (NRestarts>0)";
+    }
+
+    if (result == "success" && (code == "exited" || code == "0") && (status == "0" || status == "")) {
+        return "graceful-exit likely";
+    }
+
+    if (!result.empty() || !code.empty() || !status.empty()) {
+        return "abnormal-exit possible";
+    }
+    return "unknown";
 }
 
 }  // namespace
@@ -164,6 +242,37 @@ public:
             }
         }
 
+        // Systemd unit status and restart/stop reasons
+        {
+            std::string unit = get_systemd_unit_name();
+            if (!unit.empty()) {
+                std::string status_cmd =
+                    "systemctl show " + unit +
+                    " --no-pager -p Id -p Description -p ActiveState -p SubState -p Result -p ExecMainCode -p ExecMainStatus "
+                    "-p ExecMainPID -p ExecMainStartTimestamp -p ExecMainExitTimestamp -p InactiveExitTimestamp "
+                    "-p Restart -p NRestarts -p RestartUSec -p FragmentPath";
+                auto status_output = exec_command(status_cmd);
+
+                std::string reason_cmd =
+                    "journalctl -u " + unit +
+                    " -n 40 --no-pager --output=short-precise 2>/dev/null | "
+                    "grep -E '(Stopped|Stopping|Starting|Started|Restarting|restart job|code=|signal=|failed|killed)'";
+                auto reason_output = exec_command(reason_cmd);
+
+                if (!status_output.empty()) {
+                    ofs << "\n[Systemd Unit Status]\n" << status_output << "\n";
+                }
+                if (!reason_output.empty()) {
+                    ofs << "\n[Systemd Restart/Stop Reasons]\n" << reason_output << "\n";
+                }
+
+                if (!status_output.empty()) {
+                    std::string summary = classify_stop_reason(status_output, reason_output);
+                    ofs << "\n[Systemd Stop Reason Summary]\n" << summary << "\n";
+                }
+            }
+        }
+
         // Coredump history
         {
             auto coredumps = exec_command("coredumpctl list --no-pager --no-legend 2>/dev/null | tail -10");
@@ -198,7 +307,6 @@ public:
 
 #else  // macOS and other platforms
 
-namespace scanner{
 class MacCrashInspector final : public CrashInspector {
 public:
     bool supported() const override { return true; }
