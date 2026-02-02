@@ -379,12 +379,18 @@ static size_t process_file_stream_uint(
                 // 【关键优化】直接传递uint32，零字符串创建！
                 if (!handle_target_uint(ip_uint, line_offset)) {
                     aborted = true;
+                    LOG_CORE_WARN("[process_file_stream_uint] Handler returned false at line '{}', emitted={}", 
+                                 line, emitted);
                     return false;
                 }
                 ++emitted;
                 return true;
             }, skip_until);
-            if (!ok) return emitted;
+            if (!ok) {
+                LOG_CORE_WARN("[process_file_stream_uint] expand_cidr_stream_uint failed, aborted={}, emitted={}", 
+                             aborted, emitted);
+                return emitted;
+            }
             continue;
         }
 

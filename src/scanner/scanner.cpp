@@ -287,11 +287,25 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
             // 【关键优化】直接存储 uint32，延迟字符串化到真正需要时
             std::unique_lock<std::mutex> lock(targets_mutex_);
-            targets_cv_.wait(lock, [this]() {
-                return targets_.size() < config_.targets_max_size || stop_;
-            });
+            
+            // 【修复死锁】使用超时等待，避免永久阻塞导致文件解析提前终止
+            while (targets_.size() >= config_.targets_max_size && !stop_) {
+                auto wait_result = targets_cv_.wait_for(lock, std::chrono::seconds(30), [this]() {
+                    return targets_.size() < config_.targets_max_size || stop_;
+                });
+                
+                if (!wait_result && !stop_) {
+                    // 超时但未收到停止信号 - 可能是 scan_loop 卡住了
+                    LOG_CORE_WARN("[input_thread] Waiting for queue space timeout (queue_size={}, max={}), retrying...",
+                                 targets_.size(), config_.targets_max_size);
+                    // 继续等待而不是返回false退出
+                }
+            }
 
-            if (stop_) return false;
+            if (stop_) {
+                LOG_CORE_WARN("[input_thread] Stop signal received during enqueue, loaded={} total", loaded_count);
+                return false;
+            }
 
             ScanTarget t;
             t.set_ip(ip_uint);  // 内部会设置 ip_uint 和 domain
@@ -316,6 +330,15 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                      input_offset, skip_until_uint);
         stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
         LOG_CORE_INFO("[input_thread] Completed: loaded {} targets", loaded_count);
+        
+        // 【诊断】检查是否完整读取了文件
+        std::ifstream check_file(source_path);
+        if (check_file) {
+            check_file.seekg(0, std::ios::end);
+            auto file_size = check_file.tellg();
+            LOG_CORE_INFO("[input_thread] File size: {} bytes, final offset processed: {}", 
+                         file_size, input_offset);
+        }
 
         // 计算总目标数：如果是从断点恢复，总数 = 本轮加载 + 之前累计处理
         if (has_checkpoint) {
@@ -807,6 +830,7 @@ void Scanner::scan_loop() {
         // 检查是否完成（使用前面计算的统计信息）
         bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
         if (all_done) {
+            LOG_CORE_INFO("Scan loop: all work completed, exiting");
             break;
         }
 
