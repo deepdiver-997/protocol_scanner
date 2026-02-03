@@ -4,6 +4,7 @@
     "cpu_thread_count": 4,
     "thread_count": 8,
     "batch_size": 2000,
+    "result_batch_size": 200,
     "dns_timeout_ms": 1000,
     "probe_timeout_ms": 5000,
     "retry_count": 1,

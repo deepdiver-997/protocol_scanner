@@ -138,12 +138,10 @@
       "pattern": ".*Pure-FTPd.*"
     },
     {
-      "id": 4,
-      "matched_ids": [
-        1298664709
-      ],
-      "name": "Gmail",
-      "pattern": ".*gsmtp.*"
+      "id": 39,
+      "matched_ids": [],
+      "name": "Zimbra",
+      "pattern": ".*zimbra.*"
     },
     {
       "id": 303,
@@ -152,10 +150,12 @@
       "pattern": ".*ProFTPD.*"
     },
     {
-      "id": 39,
-      "matched_ids": [],
-      "name": "Zimbra",
-      "pattern": ".*zimbra.*"
+      "id": 4,
+      "matched_ids": [
+        1298664709
+      ],
+      "name": "Gmail",
+      "pattern": ".*gsmtp.*"
     },
     {
       "id": 1,

@@ -50,6 +50,11 @@ ProgressManager::ProgressManager(const std::string& input_path, const std::strin
 }
 
 bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
+    static bool initialized = false;
+    if (!initialized) {
+        std::cout << "[checkpoint] Saving to file: " << checkpoint_file_ << std::endl;
+        initialized = true;
+    }
     std::lock_guard<std::mutex> lock(mutex_);
     
     try {
@@ -64,16 +69,36 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
         j["input_file_offset"] = info.input_file_offset;
         j["last_processed_ip_uint"] = info.last_processed_ip_uint;  // 新增：保存 uint32 形式
         
-        std::ofstream ofs(checkpoint_file_);
+        // 【原子写入】使用临时文件 + 重命名，防止中断时导致进度文件损坏
+        // 1. 先写入临时文件
+        std::string tmp_file = checkpoint_file_ + ".tmp";
+        std::ofstream ofs(tmp_file, std::ios::trunc);
         if (!ofs) {
-            LOG_CORE_WARN("Failed to open checkpoint file for writing: {}", checkpoint_file_);
+            LOG_CORE_WARN("Failed to open temp checkpoint file for writing: {}", tmp_file);
             return false;
         }
         
         ofs << j.dump(2);
         ofs.close();
         
-        LOG_CORE_DEBUG("Checkpoint saved: {} ({} processed, {} successful)", 
+        if (!ofs.good()) {
+            LOG_CORE_WARN("Failed to write temp checkpoint file: {}", tmp_file);
+            fs::remove(tmp_file);
+            return false;
+        }
+        
+        // 2. 原子重命名：即使进程被突然终止，也不会损坏原文件
+        // rename() 在 POSIX 系统上是原子操作
+        std::error_code ec;
+        fs::rename(tmp_file, checkpoint_file_, ec);
+        if (ec) {
+            LOG_CORE_WARN("Failed to rename checkpoint file: {} -> {}: {}", 
+                         tmp_file, checkpoint_file_, ec.message());
+            fs::remove(tmp_file);
+            return false;
+        }
+        
+        LOG_CORE_DEBUG("Checkpoint saved (atomic): {} ({} processed, {} successful)", 
                       info.last_ip, processed_to_store, info.successful_count);
         return true;
     } catch (const std::exception& e) {

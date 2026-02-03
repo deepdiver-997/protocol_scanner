@@ -44,11 +44,16 @@ struct SshProbeContext {
     void complete() {
         if (completed) return;
         completed = true;
+        LOG_CORE_WARN("[SSH] complete() called, about to invoke on_complete callback");
         boost::system::error_code ec;
         (void)timer.cancel();
         socket.close(ec);
         if (on_complete) {
+            LOG_CORE_WARN("[SSH] Invoking on_complete callback");
             on_complete(std::move(result));
+            LOG_CORE_WARN("[SSH] on_complete callback returned");
+        } else {
+            LOG_CORE_WARN("[SSH] on_complete is null!");
         }
     }
 };
@@ -94,6 +99,7 @@ void SshProtocol::async_probe(
 
     tcp::endpoint endpoint(address, port);
     ctx->socket.async_connect(endpoint, [ctx](const boost::system::error_code& ec) {
+        LOG_CORE_WARN("[SSH] async_connect callback called for {}:{}, ec={}", ctx->result.host, ctx->result.port, ec.message());
         if (ec) {
             ctx->finish_error("Connection failed: " + ec.message());
             return;
@@ -104,6 +110,7 @@ void SshProtocol::async_probe(
         ctx->socket.async_read_some(
             asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
             [ctx](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+                LOG_CORE_WARN("[SSH] async_read_some callback called for {}:{}, bytes={}, ec={}", ctx->result.host, ctx->result.port, bytes_transferred, ec.message());
                 if (ec) {
                     ctx->finish_error("Read SSH version failed: " + ec.message());
                     return;
@@ -130,9 +137,11 @@ void SshProtocol::async_probe(
                 }
                 
                 ctx->result.attrs.banner = banner;
+                LOG_CORE_WARN("[SSH] Calling finish_success for {}:{} with banner: {}", ctx->result.host, ctx->result.port, banner);
                 ctx->finish_success();
             });
     });
+    LOG_CORE_WARN("[SSH] async_probe submitted for {}:{}", target, port);
 }
 
 void SshProtocol::parse_capabilities(const std::string&, ProtocolAttributes&) {}

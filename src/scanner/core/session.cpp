@@ -282,11 +282,13 @@ int ScanSession::start_all_pending_probes(
     int quota
 ) {
     // 【优化】批量启动所有待扫描协议任务
-    // 这样可以减少 start_one_probe 的调用频率（从 7 次/session → 1 次）
-    // 从而降低 scan_loop 中的遍历和 start_one_probe 的 CPU 热点
     
     const std::string& ip = target_.get_ip_string();
-    if (ip.empty() || quota <= 0) {
+    if (ip.empty()) {
+        LOG_CORE_DEBUG("[start_all_pending_probes] Skipped: empty IP");
+        return 0;
+    }
+    if (quota <= 0) {
         return 0;
     }
 
@@ -353,6 +355,7 @@ int ScanSession::start_all_pending_probes(
                 timeout,
                 exec,
                 [this, proto_name = proto_ptr->name()](ProtocolResult&& r) {
+                    LOG_CORE_WARN("[session] Probe callback invoked for {} {} (accessible={})", target_.get_ip_string(), proto_name, r.accessible);
                     if (!r.accessible && !r.error.empty()) {
                         static int err_log_count = 0;
                         if (err_log_count++ < 10) {
@@ -360,7 +363,9 @@ int ScanSession::start_all_pending_probes(
                         }
                     }
                     push_result(std::move(r));
+                    LOG_CORE_WARN("[session] After push_result, tasks_completed={}, tasks_total={}", tasks_completed(), tasks_total());
                     if (ready_to_release()) {
+                        LOG_CORE_WARN("[session] ready_to_release() returned true, calling notify_complete");
                         notify_complete();
                     }
                 }

@@ -29,7 +29,8 @@ struct ScannerConfig {
     int io_thread_count = 4;         // IO 线程数（网络 I/O，建议设置为 CPU 核心数 × 1.5）
     int cpu_thread_count = 2;        // CPU 线程数（协议解析等轻量任务，建议 2-4）
     int thread_count = 4;            // 废弃：保留向后兼容
-    int batch_size = 100;            // 批处理大小
+    int batch_size = 100;            // 扫描任务配额：每轮循环最多启动的任务数
+    int result_batch_size = 50;      // 结果写入批量：每次写入磁盘的最大结果数（0 表示不限制）
     size_t targets_max_size = 100000; // 最大待处理目标数（默认 10 万）
     size_t result_queue_max_size = 5000; // 结果队列上限，防止内存膨胀（0 表示不限制）
     std::chrono::milliseconds dns_timeout = std::chrono::milliseconds(1000);
@@ -176,12 +177,18 @@ private:
     std::shared_ptr<ThreadPool> scan_pool_;
     std::shared_ptr<IoThreadPool> io_pool_;
 
+    // 已完成报告
     BlockingQueue<ScanReport> result_queue_;
+    std::mutex reports_mutex_;
+    std::condition_variable reports_cv_;
+    std::vector<ScanReport> completed_reports_;
+
     std::vector<ScanTarget> targets_;
     std::mutex targets_mutex_;
     std::condition_variable targets_cv_;
     std::vector<std::unique_ptr<ScanSession>> sessions_;
 
+    // 扫描状态
     std::atomic<bool> stop_{false};
     std::atomic<bool> input_done_{false};
     std::atomic<bool> scan_done_{false};
@@ -191,10 +198,6 @@ private:
     std::thread input_thread_;
     std::thread result_thread_;
     std::thread scan_thread_;
-
-    std::vector<ScanReport> completed_reports_;
-    std::mutex reports_mutex_;
-    std::condition_variable reports_cv_;
 
     // 统计信息
     std::atomic<size_t> total_targets_{0};

@@ -196,6 +196,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("cpu_thread_count")) config.cpu_thread_count = s["cpu_thread_count"];
                 if (s.contains("thread_count")) config.thread_count = s["thread_count"];
                 if (s.contains("batch_size")) config.batch_size = s["batch_size"];
+                if (s.contains("result_batch_size")) config.result_batch_size = s["result_batch_size"];
                 if (s.contains("dns_timeout_ms")) config.dns_timeout = std::chrono::milliseconds(s["dns_timeout_ms"]);
                 if (s.contains("probe_timeout_ms")) config.probe_timeout = std::chrono::milliseconds(s["probe_timeout_ms"]);
                 if (s.contains("retry_count")) config.retry_count = s["retry_count"];

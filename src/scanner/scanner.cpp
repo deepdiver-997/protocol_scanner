@@ -233,6 +233,7 @@ void Scanner::start(const std::string& source_path) {
 
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
     try {
+        std::cout << "[input_thread] Starting to parse: " << source_path << std::endl;
         LOG_CORE_DEBUG("[input_thread] Starting to parse: {}", source_path);
         size_t loaded_count = 0;
         size_t skipped_count = 0;  // 记录跳过的数量
@@ -292,8 +293,15 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             // 【关键优化】直接存储 uint32，延迟字符串化到真正需要时
             std::unique_lock<std::mutex> lock(targets_mutex_);
             
+            // 打印首次入队的诊断信息
+            if (loaded_count == 0) {
+                std::cout << "[input_thread] First target enqueued, queue_size=" << targets_.size() 
+                          << ", max=" << config_.targets_max_size << std::endl;
+            }
+            
             // 【修复死锁】使用超时等待，避免永久阻塞导致文件解析提前终止
             while (targets_.size() >= config_.targets_max_size && !stop_) {
+                // std::cout << "[input_thread] Queue full, waiting... size=" << targets_.size() << std::endl;
                 auto wait_result = targets_cv_.wait_for(lock, std::chrono::seconds(30), [this]() {
                     return targets_.size() < config_.targets_max_size || stop_;
                 });
@@ -302,6 +310,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                     // 超时但未收到停止信号 - 可能是 scan_loop 卡住了
                     LOG_CORE_WARN("[input_thread] Waiting for queue space timeout (queue_size={}, max={}), retrying...",
                                  targets_.size(), config_.targets_max_size);
+                    std::cout << "[input_thread] Queue wait timeout, retrying..." << std::endl;
                     // 继续等待而不是返回false退出
                 }
             }
@@ -330,9 +339,11 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         // blocking call, will return after all targets are loaded
         // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
+        std::cout << "[input_thread] Calling stream_domains_with_offset_uint..." << std::endl;
         LOG_CORE_DEBUG("[input_thread] Calling stream_domains_with_offset_uint, offset={}, skip_until={}", 
                      input_offset, skip_until_uint);
         stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
+        std::cout << "[input_thread] Completed: loaded " << loaded_count << " targets" << std::endl;
         LOG_CORE_DEBUG("[input_thread] Completed: loaded {} targets", loaded_count);
         
         // 【诊断】检查是否完整读取了文件
@@ -362,12 +373,19 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 }
 
 void Scanner::result_handler_thread() {
+    std::cout << "[result_thread] Result handler thread started" << std::endl;
     const bool stream_mode = (config_.output_write_mode == "stream");
     auto last_flush = std::chrono::steady_clock::now();
     std::string last_processed_ip;
 
+    // ==================== Lambda 函数定义（前置） ====================
+    
+    // 处理一批扫描结果：厂商检测、统计更新、checkpoint保存
+    // 注意：这个 lambda 同时用于流式和非流式模式
     auto process_batch = [&](std::vector<ScanReport>& batch) {
-        // 厂商识别
+        if (batch.empty()) return;
+        
+        // Step 1: 厂商识别
         if (vendor_detector_) {
             for (auto& r : batch) {
                 for (auto& pr : r.protocols) {
@@ -382,7 +400,7 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        // 更新统计 & 保存结果
+        // Step 2: 更新统计 & 保存结果
         for (const auto& r : batch) {
             bool has_success = false;
             {
@@ -399,12 +417,12 @@ void Scanner::result_handler_thread() {
             }
 
             processed_count_++;
-            last_processed_ip = r.target.get_ip_string();  // 使用新的 ip() 方法
+            last_processed_ip = r.target.get_ip_string();
             if (last_processed_ip.empty()) last_processed_ip = r.target.domain;
             checkpoint_info_.input_file_offset = r.target.source_offset;
         }
 
-        // 保存进度（checkpoint）
+        // Step 3: 保存进度（checkpoint）
         checkpoint_info_.last_ip = last_processed_ip;
         checkpoint_info_.processed_count = processed_count_.load();
         checkpoint_info_.successful_count = successful_ips_.load();
@@ -432,61 +450,80 @@ void Scanner::result_handler_thread() {
         reports_cv_.notify_one();
     };
 
+    // ==================== 主循环 ====================
+
     if (stream_mode) {
+        // ========== 流式模式 ==========
         while (true) {
             bool should_stop = stop_.load();
-            // 【优化】集中获取时间，避免多次系统调用
             auto now = std::chrono::steady_clock::now();
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_flush);
 
+            // 决定是否应该 flush：满足以下任一条件
+            // 1. 收到停止信号
+            // 2. 距离上次 flush 时间超过阈值
+            // 3. 结果队列有数据
             if (!should_stop && elapsed < config_.result_flush_interval && result_queue_.empty()) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
 
+            // Step 1: 从结果队列批量取出数据（限制批量大小）
             std::vector<ScanReport> batch;
             ScanReport rep;
-            while (result_queue_.try_pop(rep)) {
+            
+            // 限制批量大小：避免一次性写入太多数据
+            int max_batch = (config_.result_batch_size > 0) ? config_.result_batch_size : 1000;
+            int count = 0;
+            while (count < max_batch && result_queue_.try_pop(rep)) {
                 batch.push_back(std::move(rep));
+                count++;
             }
 
-            if (batch.empty()) {
-            // 【关键修复】队列为空时也要检查 stop 信号，否则会无限循环
-            if (should_stop && result_queue_.empty()) {
-                LOG_CORE_DEBUG("[result_thread] Stop signal received with empty queue, exiting");
-                break;
+            // Step 2: 处理批次数据（厂商检测、统计、checkpoint）
+            if (!batch.empty()) {
+                process_batch(batch);
             }
+
+            // Step 3: 确保文件已打开，写入头信息（仅第一次）
+            if (!report_ofs_.is_open()) {
                 std::error_code ec;
                 fs::create_directories(config_.output_dir, ec);
                 std::string out_path = config_.output_dir;
                 if (!out_path.empty() && out_path.back() != '/') out_path += "/";
                 out_path += "scan_results.txt";
                 report_ofs_.open(out_path, std::ios::app);
-                if (checkpoint_info_.last_ip.empty() && report_ofs_.is_open() && !header_written_) {
+                if (report_ofs_.is_open() && !header_written_) {
                     report_ofs_ << "Scan Results\n";
                     report_ofs_ << "============\n";
                     header_written_ = true;
                 }
             }
 
-            if (report_ofs_.is_open()) {
+            // Step 4: 写入处理后的结果到文件
+            if (report_ofs_.is_open() && !batch.empty()) {
                 report_ofs_ << result_handler_->reports_to_string(batch);
                 report_ofs_.flush();
             }
 
-            // 【优化】使用循环开头的 now，而不是重新获取时间
+            // Step 5: 更新 flush 时间
             last_flush = now;
             
-            // 检查退出条件：stop 信号已发出 且 队列已清空
+            // Step 6: 检查退出条件：stop 信号已发出 且 队列已清空
             if (should_stop && result_queue_.empty() && batch.empty()) {
+                LOG_CORE_DEBUG("[result_thread] Stream mode: stop signal with empty queue, exiting");
                 break;
             }
         }
     } else {
+        // ========== 非流式模式 ==========
         std::cout << "Warning: Non-stream mode may consume large memory for storing results." << std::endl;
         std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+        
         while (true) {
             bool should_stop = stop_.load();
+            
+            // 从结果队列批量取出数据
             std::vector<ScanReport> batch;
             ScanReport rep;
             while (result_queue_.try_pop(rep)) {
@@ -494,7 +531,7 @@ void Scanner::result_handler_thread() {
             }
 
             if (batch.empty()) {
-                // 【关键修复】非流式模式也要检查 stop 信号
+                // 队列为空，检查是否应该停止
                 if (should_stop) {
                     LOG_CORE_DEBUG("[result_thread] Non-stream mode: stop signal with empty batch, exiting");
                     break;
@@ -503,8 +540,10 @@ void Scanner::result_handler_thread() {
                 continue;
             }
 
+            // 处理一批数据
             process_batch(batch);
 
+            // 累积到完整结果列表
             std::lock_guard<std::mutex> lock(reports_mutex_);
             completed_reports_.insert(completed_reports_.end(), batch.begin(), batch.end());
         }
@@ -595,18 +634,15 @@ void Scanner::scan_loop() {
     // 内存监控：记录容器大小以便诊断内存问题
     auto last_mem_log = std::chrono::steady_clock::now();
 
-    // 计算安全的任务配额：
-    // - 每个 session 有 N 个协议探测（如 3 个：SSH, FTP, TELNET）
-    // - 每个探测需要 1 个 socket (FD)
-    // - 所以 max_work_count 个 session 最多需要 max_work_count * num_protocols 个 FD
-    // - 我们需要确保 quota 不会一次性创建太多连接
+    // ==================== Lambda 函数定义（前置） ====================
+    
+    // 计算本轮可分配的任务配额
+    // 每轮循环最多启动的任务数，考虑最大并发会话限制
     auto estimate_quota = [this]() -> int {
-        // 每轮循环最多启动的任务数
-        // 保守一点：最多启动 max_work_count / 2 个新任务
         int max_concurrent = static_cast<int>(config_.max_work_count);
         if (max_concurrent <= 0) max_concurrent = 1000; // 默认上限
         
-        // 留出余量给已经在进行中的连接
+        // 统计当前活跃会话数
         int active_sessions = 0;
         for (const auto& s : sessions_) {
             if (s && !s->is_idle()) {
@@ -620,6 +656,7 @@ void Scanner::scan_loop() {
         return quota;
     };
 
+    // 等待结果队列有足够空间，避免队列溢出
     auto wait_result_slot = [this]() {
         if (config_.result_queue_max_size == 0) return;
         while (!stop_ && result_queue_.size() >= config_.result_queue_max_size) {
@@ -627,25 +664,40 @@ void Scanner::scan_loop() {
         }
     };
 
-    // 【新优化】根据负载动态计算睡眠时间，避免固定 5ms 导致过多的 clock_nanosleep 调用
-    auto calculate_adaptive_sleep = [](int active_sessions, int idle_count, int quota_used, int total_sessions, bool has_targets) -> std::chrono::milliseconds {
-        // 【关键修复】之前的逻辑太保守，导致input_thread被阻塞
-        // 新策略：只要有targets待处理，就保持高频率消费（1-2ms）
-        
+    // 根据负载动态计算睡眠时间，避免固定睡眠导致过多系统调用
+    auto calculate_adaptive_sleep = [](int active_sessions, bool has_targets) -> std::chrono::milliseconds {
         if (has_targets) {
-            // 有待扫描目标 → 保持高频率消费
+            // 有待扫描目标 → 保持高频率消费（1ms）
             return std::chrono::milliseconds(1);
         }
         
         // 无待扫描目标，根据活跃会话数调整
         if (active_sessions > 0) {
-            // 还有活跃会话在运行 → 中等频率
+            // 还有活跃会话在运行 → 中等频率（3ms）
             return std::chrono::milliseconds(3);
         }
         
-        // 无待扫描目标且无活跃会话 → 可能即将结束
+        // 无待扫描目标且无活跃会话 → 可能即将结束（10ms）
         return std::chrono::milliseconds(10);
     };
+
+    // 批量获取 targets，减少锁竞争
+    // 从队列尾部取出最多 max_count 个 target，返回实际获取数量
+    auto fetch_targets_batch = [this](std::vector<ScanTarget>& out, int max_count) -> int {
+        std::lock_guard<std::mutex> lock(targets_mutex_);
+        int count = 0;
+        while (count < max_count && !targets_.empty()) {
+            out.push_back(std::move(targets_.back()));
+            targets_.pop_back();
+            count++;
+        }
+        if (count > 0) {
+            targets_cv_.notify_one();
+        }
+        return count;
+    };
+
+    // ==================== 主循环 ====================
 
     while (true) {
         // 【优化】在循环开头一次性获取当前时间，避免多次系统调用
@@ -653,7 +705,7 @@ void Scanner::scan_loop() {
         
         // 每10秒记录一次内存状态（用于诊断内存占用问题）
         if (std::chrono::duration_cast<std::chrono::seconds>(loop_now - last_mem_log).count() >= 10) {
-            // Only compute these if INFO logging is enabled
+            
             #ifdef ENABLE_LOGGING_INFO
             size_t pending_sessions = 0;
             for (auto& s : sessions_) {
@@ -661,8 +713,6 @@ void Scanner::scan_loop() {
                     pending_sessions++;
                 }
             }
-            
-            // 获取内存池统计
             const auto pool_stats = get_global_buffer_pool().get_stats();
             #endif
             
@@ -688,36 +738,17 @@ void Scanner::scan_loop() {
             last_mem_log = loop_now;
         }
 
+        // ========== Step 1: 计算本轮任务配额 ==========
         int quota = estimate_quota();
-        int initial_quota = quota;  // 记录初始 quota 用于计算使用率
+        int initial_quota = quota;
 
-        auto fetch_target = [this](ScanTarget& out) -> bool {
-            std::lock_guard<std::mutex> lock(targets_mutex_);
-            if (targets_.empty()) {
-                targets_cv_.notify_one();
-                return false;
-            }
-            out = std::move(targets_.back());
-            targets_.pop_back();
-            return true;
-        };
+        // ========== Step 2: 批量获取 targets ==========
+        std::vector<ScanTarget> batch_targets;
+        batch_targets.reserve(std::min(quota, 50));  // 每批最多50个
+        int fetched = fetch_targets_batch(batch_targets, std::min(quota, 50));
 
-        auto fetch_targets_batch = [this](std::vector<ScanTarget>& out, int max_count) -> int {
-            std::lock_guard<std::mutex> lock(targets_mutex_);
-            int count = 0;
-            while (count < max_count && !targets_.empty()) {
-                out.push_back(std::move(targets_.back()));
-                targets_.pop_back();
-                count++;
-            }
-            if (count > 0) {
-                targets_cv_.notify_one();
-            }
-            return count;
-        };
-
-        // 单次遍历：复用已完成 + 分配任务 + 统计状态
-        // 将原来的 4 次遍历合并为 1 次，减少缓存失效和循环开销
+        // ========== Step 3: 单次遍历 sessions 数组 ==========
+        // 检查已有会话状态、收集完成结果、为活跃会话分配新任务
         int active_sessions = 0;
         int idle_count = 0;
         
@@ -725,6 +756,7 @@ void Scanner::scan_loop() {
             if (!s) continue;
             
             bool is_idle = s->is_idle();
+            
             if (is_idle) {
                 idle_count++;
                 continue;
@@ -732,7 +764,7 @@ void Scanner::scan_loop() {
             
             active_sessions++;
             
-            // 1️⃣ 检查是否完成，复用已完成的 session
+            // 检查是否完成：若完成，先提交结果到结果队列
             if (s->ready_to_release()) {
                 ScanReport rep;
                 rep.target = s->target();
@@ -740,100 +772,83 @@ void Scanner::scan_loop() {
                 rep.total_time = config_.probe_timeout;
                 wait_result_slot();
                 result_queue_.push(rep);
-
-                ScanTarget next_target;
-                if (fetch_target(next_target)) {
+                LOG_CORE_DEBUG("[scan_loop] Session completed, pushed result for {}", s->target().get_ip_string());
+                
+                // 尝试分配新任务给这个已完成的 session
+                if (!batch_targets.empty() && quota > 0 && active_sessions <= static_cast<int>(config_.max_work_count)) {
+                    ScanTarget next_target = std::move(batch_targets.back());
+                    batch_targets.pop_back();
+                    
                     s->reset(
                         std::move(next_target),
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_
                     );
                     s->set_only_success(config_.only_success);
-                    // 【优化】一次性批量启动所有待扫协议，而不是多次循环
+                    
+                    // 启动新任务
                     int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
                 } else {
-                    // 【优化】mark_idle 无需调用，is_idle 由 tasks_total == 0 隐含表示
+                    // 无新任务可分配，会话变为空闲
                     idle_count++;
                     active_sessions--;
                 }
             } else {
-                // 2️⃣ 为现有活跃 session 分配新任务【优化】批量启动所有待扫协议
-                int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
-                quota -= started;
+                // 为现有活跃 session 继续启动待扫协议（如果还有配额）
+                if (quota > 0) {
+                    int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                    quota -= started;
+                }
             }
             
-            if (quota == 0) break;
+            if (quota == 0) break;  // 配额用完，退出遍历
         }
 
-        // 【批量优化】一次性批量获取多个targets，减少锁竞争
+        // ========== Step 4: 创建新 session 并分配批量 targets ==========
+        // 注意：到这里为止，所有已有的 session 都应该是繁忙的
+        // （如果有空闲的，已在 Step 3 中复用了）
         int max_sessions = config_.max_work_count > 0
             ? static_cast<int>(config_.max_work_count)
             : std::max(1, config_.batch_size);
 
-        // 批量获取targets（一次最多取quota个，避免过度占用）
-        std::vector<ScanTarget> batch_targets;
-        batch_targets.reserve(std::min(quota, 50));  // 每批最多50个，避免一次取太多
-        fetch_targets_batch(batch_targets, std::min(quota, 50));
-        
-        // 批量分配targets到session
+        // 遍历批量 targets，为每个创建新 session（无需查找空闲 session）
         for (auto& t : batch_targets) {
-            if (quota == 0) {
-                // 配额用完，剩余的放回队列
+            if (quota == 0) break;  // 配额用完，退出创建
+            
+            if (active_sessions >= max_sessions) {
+                // 已达最大会话数，无法创建新 session，把 target 放回队列
                 std::lock_guard<std::mutex> lock(targets_mutex_);
                 targets_.push_back(std::move(t));
                 continue;
             }
 
-            // 检查最大并发会话数
-            if (active_sessions >= max_sessions) {
-                // 放回这个 target，不创建新会话
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                targets_.push_back(std::move(t));
-                break;
-            }
-
-            // 查找 idle session 进行复用
-            ScanSession* idle_session = nullptr;
-            if (idle_count > 0) {
-                for (auto& s : sessions_) {
-                    if (s && s->is_idle()) {
-                        idle_session = s.get();
-                        idle_count--;
-                        active_sessions++;
-                        break;
-                    }
-                }
-            }
-
-            if (idle_session) {
-                idle_session->reset(
-                    std::move(t),
-                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                    protocols_
-                );
-                idle_session->set_only_success(config_.only_success);
-                // 【优化】批量启动
-                int started = idle_session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
-                quota -= started;
-            } else {
-                auto sess = std::make_unique<ScanSession>(
-                    t,
-                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                    config_.dns_timeout,
-                    config_.probe_timeout,
-                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                    protocols_
-                );
-                sess->set_only_success(config_.only_success);
-                int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
-                quota -= started;
-                sessions_.push_back(std::move(sess));
-                active_sessions++;
-            }
+            // 直接创建新 session
+            auto sess = std::make_unique<ScanSession>(
+                t,
+                dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                config_.dns_timeout,
+                config_.probe_timeout,
+                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
+                protocols_
+            );
+            sess->set_only_success(config_.only_success);
+            int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+            quota -= started;
+            sessions_.push_back(std::move(sess));
+            active_sessions++;
         }
 
-        // 检查是否完成（使用前面计算的统计信息）
+        // 把未分配的 targets 放回队列
+        if (!batch_targets.empty()) {
+            std::lock_guard<std::mutex> lock(targets_mutex_);
+            for (auto& t : batch_targets) {
+                targets_.push_back(std::move(t));
+            }
+            targets_cv_.notify_one();
+        }
+
+        // ========== Step 5: 检查完成条件 ==========
         bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
         if (all_done) {
             LOG_CORE_DEBUG("Scan loop: all work completed, exiting. input_done={}, targets_empty={}, active_sessions={}",
@@ -841,32 +856,14 @@ void Scanner::scan_loop() {
             break;
         }
 
-        // 【诊断日志】每100次循环打印一次状态
-        // static int loop_count = 0;
-        // if (++loop_count % 100 == 0) {
-        //     size_t targets_size = 0;
-        //     {
-        //         std::lock_guard<std::mutex> lock(targets_mutex_);
-        //         targets_size = targets_.size();
-        //     }
-        // }
-
-        // 【优化】动态睡眠时间：根据负载自适应调整，避免固定 5ms 导致过多 clock_nanosleep 开销
-        int quota_used = initial_quota - quota;
+        // ========== Step 6: 动态睡眠 ==========
         bool has_targets = false;
         {
             std::lock_guard<std::mutex> lock(targets_mutex_);
             has_targets = !targets_.empty();
         }
         
-        auto sleep_duration = calculate_adaptive_sleep(
-            active_sessions,
-            idle_count,
-            quota_used,
-            static_cast<int>(sessions_.size()),
-            has_targets
-        );
-        
+        auto sleep_duration = calculate_adaptive_sleep(active_sessions, has_targets);
         std::this_thread::sleep_for(sleep_duration);
     }
 
@@ -875,7 +872,7 @@ void Scanner::scan_loop() {
         end_time_ = std::chrono::steady_clock::now();
     }
     scan_done_ = true;
-    reports_cv_.notify_all();
+    // reports_cv_.notify_all();
     
     LOG_CORE_INFO("Scan loop completed");
 }
