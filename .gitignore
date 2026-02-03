@@ -1,5 +1,5 @@
 # Build artifacts
-build/
+build*
 *.o
 *.a
 *.so
@@ -21,6 +21,7 @@ cmake_install.cmake
 Makefile
 CTestTestfile.cmake
 _deps/
+cmake/
 
 # Temporary files
 temp/

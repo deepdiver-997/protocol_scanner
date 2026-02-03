@@ -32,7 +32,7 @@ Scanner::Scanner(const ScannerConfig& config)
     scan_pool_ = std::make_shared<ThreadPool>(std::max(1, cpu_threads));
     io_pool_ = std::make_shared<IoThreadPool>(std::max(1, io_threads));
 
-    LOG_CORE_INFO("Thread pools initialized: IO={} CPU={}", io_threads, cpu_threads);
+    LOG_CORE_DEBUG("Thread pools initialized: IO={} CPU={}", io_threads, cpu_threads);
     
     DnsResolverFactory::ResolverType rtype = DnsResolverFactory::ResolverType::C_ARES;
     const auto& rname = config_.dns_resolver_type;
@@ -115,20 +115,20 @@ void Scanner::start(const std::string& source_path) {
         config_.max_work_count = std::max(500, io_threads * 300);
         // init_global_buffer_pool 需要这个值来初始化缓冲池大小
         get_global_buffer_pool(config_.max_work_count);
-        LOG_CORE_INFO("Auto-configured max_work_count: {} (based on {} IO threads)", 
+        LOG_CORE_DEBUG("Auto-configured max_work_count: {} (based on {} IO threads)", 
                      config_.max_work_count, io_threads);
     }
     
     if (config_.targets_max_size == 0) {
         // targets队列大小：至少是max_work_count的2倍，保证input线程不会被阻塞
         config_.targets_max_size = std::max(size_t(5000), config_.max_work_count * 3);
-        LOG_CORE_INFO("Auto-configured targets_max_size: {}", config_.targets_max_size);
+        LOG_CORE_DEBUG("Auto-configured targets_max_size: {}", config_.targets_max_size);
     }
     
     if (config_.result_queue_max_size == 0) {
         // 结果队列：通常max_work_count的一半即可
         config_.result_queue_max_size = std::max(size_t(500), config_.max_work_count / 2);
-        LOG_CORE_INFO("Auto-configured result_queue_max_size: {}", config_.result_queue_max_size);
+        LOG_CORE_DEBUG("Auto-configured result_queue_max_size: {}", config_.result_queue_max_size);
     }
 
     // 初始化厂商检测（内部封装，不再由 main 管理）
@@ -196,7 +196,7 @@ void Scanner::start(const std::string& source_path) {
     // 【优化】等待 input_thread 至少加载一些 targets，但有超时防止卡住
     // 即使没有加载完，也要启动 scan_loop 开始消费，否则输入线程会因为 targets 满而阻塞
     if (has_checkpoint) {
-        LOG_CORE_INFO("Waiting for input thread to load initial targets after checkpoint skip...");
+        LOG_CORE_DEBUG("Waiting for input thread to load initial targets after checkpoint skip...");
         const size_t min_targets_before_start = 50;  // 至少等待50个target加载
         const auto start_wait = std::chrono::steady_clock::now();
         bool got_enough_targets = false;
@@ -208,7 +208,7 @@ void Scanner::start(const std::string& source_path) {
             });
             
             if (ready && targets_.size() >= min_targets_before_start) {
-                LOG_CORE_INFO("Initial targets loaded ({}), starting scan threads", targets_.size());
+                LOG_CORE_DEBUG("Initial targets loaded ({}), starting scan threads", targets_.size());
                 got_enough_targets = true;
                 break;
             }
@@ -233,7 +233,7 @@ void Scanner::start(const std::string& source_path) {
 
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
     try {
-        LOG_CORE_INFO("[input_thread] Starting to parse: {}", source_path);
+        LOG_CORE_DEBUG("[input_thread] Starting to parse: {}", source_path);
         size_t loaded_count = 0;
         size_t skipped_count = 0;  // 记录跳过的数量
         size_t input_offset = has_checkpoint ? checkpoint_info_.input_file_offset : 0;
@@ -246,11 +246,11 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         uint32_t skip_until_uint = 0;
         if (has_checkpoint && checkpoint_info_.last_processed_ip_uint > 0) {
             skip_until_uint = checkpoint_info_.last_processed_ip_uint;
-            LOG_CORE_INFO("Using saved checkpoint IP uint32: {}", skip_until_uint);
+            LOG_CORE_DEBUG("Using saved checkpoint IP uint32: {}", skip_until_uint);
         } else if (skip_mode && is_valid_ip_address(skip_until_ip)) {
             try {
                 skip_until_uint = boost::asio::ip::make_address_v4(skip_until_ip).to_uint();
-                LOG_CORE_INFO("Checkpoint IP {} converted to uint32: {}", skip_until_ip, skip_until_uint);
+                LOG_CORE_DEBUG("Checkpoint IP {} converted to uint32: {}", skip_until_ip, skip_until_uint);
             } catch (...) {
                 LOG_CORE_WARN("Failed to parse checkpoint IP {}, fallback to string compare", skip_until_ip);
             }
@@ -260,7 +260,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         // 说明是文件偏移跳转但无需查找特定IP，直接从偏移位置开始处理
         if (has_checkpoint && input_offset > 0 && skip_until_ip.empty()) {
             skip_mode = false;  // 直接从偏移开始，无需跳过
-            LOG_CORE_INFO("Resuming from file offset {} without IP skip", input_offset);
+            LOG_CORE_DEBUG("Resuming from file offset {} without IP skip", input_offset);
         }
 
         // 【关键优化】直接接受 uint32，完全避免字符串转换开销
@@ -275,11 +275,11 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
                 if (skip_until_uint > 0) {
                     if (ip_uint == skip_until_uint) {
                         skip_mode = false;
-                        LOG_CORE_INFO("Resumed from checkpoint: IP uint {} (skipped {} IPs)", skip_until_uint, skipped_count);
+                        LOG_CORE_INFO("Resumed from checkpoint: skipped {} IPs", skipped_count);
                     } else if (ip_uint < skip_until_uint) {
                         skipped_count++;
                         if (skipped_count % 10000 == 0) {
-                            LOG_CORE_INFO("Skipping: current={} target={} skipped={}", ip_uint, skip_until_uint, skipped_count);
+                            LOG_CORE_DEBUG("Skipping: current={} target={} skipped={}", ip_uint, skip_until_uint, skipped_count);
                         }
                         return true;  // 跳过，不创建字符串
                     } else {
@@ -322,7 +322,7 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             
             // 【诊断日志】每1000个IP打印一次进度
             if (loaded_count % 1000 == 0) {
-                LOG_CORE_INFO("[input_thread] Loaded {} targets, queue_size={}", loaded_count, targets_.size());
+                LOG_CORE_DEBUG("[input_thread] Loaded {} targets, queue_size={}", loaded_count, targets_.size());
             }
             
             return true;
@@ -330,17 +330,17 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         // blocking call, will return after all targets are loaded
         // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
-        LOG_CORE_INFO("[input_thread] Calling stream_domains_with_offset_uint, offset={}, skip_until={}", 
+        LOG_CORE_DEBUG("[input_thread] Calling stream_domains_with_offset_uint, offset={}, skip_until={}", 
                      input_offset, skip_until_uint);
         stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
-        LOG_CORE_INFO("[input_thread] Completed: loaded {} targets", loaded_count);
+        LOG_CORE_DEBUG("[input_thread] Completed: loaded {} targets", loaded_count);
         
         // 【诊断】检查是否完整读取了文件
         std::ifstream check_file(source_path);
         if (check_file) {
             check_file.seekg(0, std::ios::end);
             auto file_size = check_file.tellg();
-            LOG_CORE_INFO("[input_thread] File size: {} bytes, final offset processed: {}", 
+            LOG_CORE_DEBUG("[input_thread] File size: {} bytes, final offset processed: {}", 
                          file_size, input_offset);
         }
 
@@ -453,7 +453,7 @@ void Scanner::result_handler_thread() {
             if (batch.empty()) {
             // 【关键修复】队列为空时也要检查 stop 信号，否则会无限循环
             if (should_stop && result_queue_.empty()) {
-                LOG_CORE_INFO("[result_thread] Stop signal received with empty queue, exiting");
+                LOG_CORE_DEBUG("[result_thread] Stop signal received with empty queue, exiting");
                 break;
             }
                 std::error_code ec;
@@ -496,7 +496,7 @@ void Scanner::result_handler_thread() {
             if (batch.empty()) {
                 // 【关键修复】非流式模式也要检查 stop 信号
                 if (should_stop) {
-                    LOG_CORE_INFO("[result_thread] Non-stream mode: stop signal with empty batch, exiting");
+                    LOG_CORE_DEBUG("[result_thread] Non-stream mode: stop signal with empty batch, exiting");
                     break;
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
@@ -563,7 +563,7 @@ void Scanner::result_handler_thread() {
         } else {
             ofs << summary_output;
             ofs.close();
-            LOG_CORE_INFO("Results saved to {}", out_path);
+            LOG_CORE_DEBUG("Results saved to {}", out_path);
         }
     }
 
@@ -582,7 +582,7 @@ void Scanner::result_handler_thread() {
         progress_manager_->clear_checkpoint();
     }
 
-    LOG_CORE_INFO("Result handler thread finished");
+    LOG_CORE_DEBUG("Result handler thread finished");
 }
 
 void Scanner::scan_loop() {
@@ -666,7 +666,7 @@ void Scanner::scan_loop() {
             const auto pool_stats = get_global_buffer_pool().get_stats();
             #endif
             
-            LOG_CORE_INFO(
+            LOG_CORE_DEBUG(
                 "[Memory] sessions_total={} sessions_pending={} targets_queue={} result_queue={} | "
                 "[BufferPool] size={} available={} hit_rate={:.2f}%",
                 sessions_.size(),
@@ -836,7 +836,7 @@ void Scanner::scan_loop() {
         // 检查是否完成（使用前面计算的统计信息）
         bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
         if (all_done) {
-            LOG_CORE_INFO("Scan loop: all work completed, exiting. input_done={}, targets_empty={}, active_sessions={}",
+            LOG_CORE_DEBUG("Scan loop: all work completed, exiting. input_done={}, targets_empty={}, active_sessions={}",
                          input_done_.load(), targets_.empty(), active_sessions);
             break;
         }
@@ -900,7 +900,7 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
     // 这样避免 result_thread_ 的周期性写入和最终写入冲突
     if (result_thread_.joinable()) {
         lock.unlock();  // 释放锁，避免死锁
-        LOG_CORE_INFO("[get_results] Condition met, setting stop_=true to signal result_thread to exit. "
+        LOG_CORE_DEBUG("[get_results] Condition met, setting stop_=true to signal result_thread to exit. "
                       "input_done={}, targets_empty={}, scan_done={}", 
                       input_done_.load(), targets_.empty(), scan_done_.load());
         stop_ = true;  // 确保 result_handler_thread 退出

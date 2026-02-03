@@ -440,7 +440,7 @@ size_t stream_domains(
 
     try {
         if (fs::is_directory(path)) {
-            LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
+            LOG_FILE_IO_DEBUG("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
                 if (!entry.is_regular_file()) continue;
                 total += process_file_stream(entry.path().string(), offset, skipped, handle_target, aborted);
@@ -455,7 +455,7 @@ size_t stream_domains(
         LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
     }
 
-    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    LOG_FILE_IO_DEBUG("Total loaded {} targets from {}", total, path);
     return total;
 }
 
@@ -472,7 +472,7 @@ size_t stream_domains_with_offset(
             if (file_offset > 0) {
                 LOG_CORE_WARN("Input path is directory; file_offset={} ignored", file_offset);
             }
-            LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
+            LOG_FILE_IO_DEBUG("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
                 if (!entry.is_regular_file()) continue;
                 total += process_file_stream_with_offset(entry.path().string(), 0, handle_target, aborted);
@@ -487,7 +487,7 @@ size_t stream_domains_with_offset(
         LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
     }
 
-    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    LOG_FILE_IO_DEBUG("Total loaded {} targets from {}", total, path);
     return total;
 }
 
@@ -507,7 +507,7 @@ size_t stream_domains_with_offset_uint(
             if (file_offset > 0) {
                 LOG_CORE_WARN("Input path is directory; file_offset={} ignored", file_offset);
             }
-            LOG_FILE_IO_INFO("Loading targets from directory: {}", path);
+            LOG_FILE_IO_DEBUG("Loading targets from directory: {}", path);
             for (const auto& entry : fs::recursive_directory_iterator(path)) {
                 if (!entry.is_regular_file()) continue;
                 total += process_file_stream_uint(entry.path().string(), 0, handle_target, aborted, skip_until);
@@ -522,7 +522,7 @@ size_t stream_domains_with_offset_uint(
         LOG_CORE_CRITICAL("Error during loading targets from {}: {}", path, e.what());
     }
 
-    LOG_FILE_IO_INFO("Total loaded {} targets from {}", total, path);
+    LOG_FILE_IO_DEBUG("Total loaded {} targets from {}", total, path);
     return total;
 }
 

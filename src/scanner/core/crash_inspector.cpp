@@ -300,7 +300,7 @@ public:
         }
 
         ofs.flush();
-        LOG_CORE_INFO("CrashInspector wrote diagnostics to {}", diag_output_file);
+        LOG_CORE_DEBUG("CrashInspector wrote diagnostics to {}", diag_output_file);
         return true;
     }
 };
@@ -328,7 +328,7 @@ public:
         ofs << "progress_file: " << progress_file << "\n";
         ofs << "note: macOS inspection is minimal; run 'sysctl vm.swapusage' and 'ulimit -a' manually if needed.\n";
         ofs.flush();
-        LOG_CORE_INFO("CrashInspector wrote diagnostics to {} (macOS)", diag_output_file);
+        LOG_CORE_DEBUG("CrashInspector wrote diagnostics to {} (macOS)", diag_output_file);
         return true;
     }
 };

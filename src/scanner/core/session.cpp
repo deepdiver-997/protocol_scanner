@@ -50,7 +50,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
         dns_result_.domain = target_.domain;
         dns_result_.ip = current_ip;
         dns_result_.success = true;
-        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, current_ip);
+        LOG_DNS_DEBUG("Using pre-provided IP for {}: {}", target_.domain, current_ip);
     } else if (!target_.domain.empty() && dns_resolver_) {
         // 没有IP，需要DNS解析
         int max_retries = 2; // 默认尝试 2 次
@@ -130,7 +130,7 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
         dns_result_.domain = target_.domain;
         dns_result_.ip = current_ip;
         dns_result_.success = true;
-        LOG_DNS_INFO("Using pre-provided IP for {}: {}", target_.domain, current_ip);
+        LOG_DNS_DEBUG("Using pre-provided IP for {}: {}", target_.domain, current_ip);
     } else if (!target_.domain.empty() && dns_resolver_) {
         // 没有IP，需要DNS解析
         int max_retries = 2; // 默认尝试 2 次

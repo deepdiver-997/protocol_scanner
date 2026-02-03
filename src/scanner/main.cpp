@@ -40,7 +40,7 @@ void check_system_limits(ScannerConfig& config) {
              struct rlimit new_rl = rl;
              new_rl.rlim_cur = rl.rlim_max; // 尝试提升到 hard limit
              if (setrlimit(RLIMIT_NOFILE, &new_rl) == 0) {
-                 LOG_CORE_INFO("Successfully raised FD limit from {} to {}", rl.rlim_cur, new_rl.rlim_cur);
+                 LOG_CORE_DEBUG("Successfully raised FD limit from {} to {}", rl.rlim_cur, new_rl.rlim_cur);
                  rl = new_rl; // 更新当前状态
              } else {
                  LOG_CORE_WARN("Failed to raise FD limit from {} to {}: {}", rl.rlim_cur, rl.rlim_max, strerror(errno));
@@ -54,7 +54,7 @@ void check_system_limits(ScannerConfig& config) {
              new_rl.rlim_cur = 65535;
              if (new_rl.rlim_max < 65535) new_rl.rlim_max = 65535;
              if (setrlimit(RLIMIT_NOFILE, &new_rl) == 0) {
-                  LOG_CORE_INFO("Forcefully raised FD limit to 65535");
+                  LOG_CORE_DEBUG("Forcefully raised FD limit to 65535");
                   rl = new_rl;
              }
         }
@@ -65,7 +65,7 @@ void check_system_limits(ScannerConfig& config) {
         size_t reserved_fds = 150; 
         size_t usable_fds = (fd_limit > reserved_fds) ? (fd_limit - reserved_fds) : 0;
 
-        LOG_CORE_INFO("System FD Limit: {} (Usable: {})", fd_limit, usable_fds);
+        LOG_CORE_DEBUG("System FD Limit: {} (Usable: {})", fd_limit, usable_fds);
 
         // 如果用户配置的并发数超过了系统允许的 FD 数量，自动降级
         if (config.max_work_count == 0 || config.max_work_count > usable_fds) {
@@ -78,12 +78,12 @@ void check_system_limits(ScannerConfig& config) {
                 // 如果是 0 (无限制)，则设置为安全上限
                 // 只有当 FD limit 看起来比较小时才打印 INFO，避免 65535 时也刷屏
                 if (fd_limit < 10000) {
-                     LOG_CORE_INFO("Auto-setting max_work_count to {} based on system FD limit ({})", 
+                     LOG_CORE_DEBUG("Auto-setting max_work_count to {} based on system FD limit ({})", 
                                    suggested, fd_limit);
                 } else {
                     // 如果很大，还是设置一个默认上限，防止无限撑爆内存
                     suggested = std::min((size_t)50000, usable_fds);
-                    LOG_CORE_INFO("Auto-setting max_work_count to {} (Safe limit)", suggested);
+                    LOG_CORE_DEBUG("Auto-setting max_work_count to {} (Safe limit)", suggested);
                 }
             }
             config.max_work_count = suggested;
@@ -154,13 +154,13 @@ bool run_startup_inspection(const std::string& domains_file, const ScannerConfig
     const std::string progress_file = pm.get_checkpoint_file();
 
     if (!pm.has_valid_checkpoint()) {
-        LOG_CORE_INFO("No checkpoint found at startup: {}", progress_file);
+        LOG_CORE_DEBUG("No checkpoint found at startup: {}", progress_file);
         return false;
     }
 
     auto inspector = CrashInspector::create();
     if (!inspector || !inspector->supported()) {
-        LOG_CORE_INFO("Crash inspector not available on this platform; skipping startup inspection");
+        LOG_CORE_DEBUG("Crash inspector not available on this platform; skipping startup inspection");
         return false;
     }
 
@@ -170,7 +170,7 @@ bool run_startup_inspection(const std::string& domains_file, const ScannerConfig
 
     const bool executed = inspector->inspect(progress_file, diag_path);
     if (executed) {
-        LOG_CORE_INFO("Startup inspection completed, diagnostics at {}", diag_path);
+        LOG_CORE_DEBUG("Startup inspection completed, diagnostics at {}", diag_path);
     }
     return executed;
 }
@@ -279,7 +279,7 @@ ScannerConfig load_config(const string& config_file) {
                 if (v.contains("similarity_threshold")) config.vendor_similarity_threshold = v["similarity_threshold"];
             }
 
-            LOG_CORE_INFO("Loaded config from {}", config_file);
+            LOG_CORE_DEBUG("Loaded config from {}", config_file);
 
         } catch (const nlohmann::json::exception& e) {
             LOG_CORE_WARN("Failed to parse config file '{}': {}", config_file, e.what());
@@ -392,7 +392,7 @@ int main(int argc, char* argv[]) {
 
         // 临时 DNS 测试模式
         if (vm.count("dns-test")) {
-            LOG_CORE_INFO("Running DNS test mode...");
+            LOG_CORE_DEBUG("Running DNS test mode...");
             scanner::Logger::get_instance().init();
             scanner::Logger::get_instance().set_level(spdlog::level::info);
 
@@ -484,7 +484,7 @@ int main(int argc, char* argv[]) {
             config.thread_count = threads;
             config.io_thread_count = threads;
             config.cpu_thread_count = std::max(1, threads / 4);
-            LOG_CORE_INFO("Using legacy --threads={} setting both IO and CPU pools", threads);
+            LOG_CORE_DEBUG("Using legacy --threads={} setting both IO and CPU pools", threads);
         }
 
         if (vm["timeout"].defaulted() == false) {
@@ -541,7 +541,7 @@ int main(int argc, char* argv[]) {
             // 兼容简写：txt -> text
             if (fmt == "txt") fmt = "text";
             config.output_format = fmt;
-            LOG_CORE_INFO("Output format override from command line: {}", config.output_format);
+            LOG_CORE_DEBUG("Output format override from command line: {}", config.output_format);
         }
 
         // 设置日志级别
@@ -585,9 +585,9 @@ int main(int argc, char* argv[]) {
 
         // 显示最终配置（在命令行参数覆盖后）
         if (config.io_thread_count > 0 && config.cpu_thread_count > 0) {
-            LOG_CORE_INFO("Thread pools: IO={}, CPU={}", config.io_thread_count, config.cpu_thread_count);
+            LOG_CORE_DEBUG("Thread pools: IO={}, CPU={}", config.io_thread_count, config.cpu_thread_count);
         } else {
-            LOG_CORE_INFO("Thread count: {} (legacy mode)", config.thread_count);
+            LOG_CORE_DEBUG("Thread count: {} (legacy mode)", config.thread_count);
         }
 
         if (vm.count("scan")) {

@@ -41,7 +41,7 @@ bool VendorDetector::load_patterns(const std::string& filename) {
             match_counts_[pattern.id] = 0;
         }
 
-        LOG_CORE_INFO("Loaded {} vendor patterns from {}", patterns_.size(), filename);
+        LOG_CORE_DEBUG("Loaded {} vendor patterns from {}", patterns_.size(), filename);
 
         return compile_patterns();
     } catch (const nlohmann::json::exception& e) {
@@ -127,7 +127,7 @@ bool VendorDetector::save_patterns(const std::string& filename) const {
 
     ofs << j.dump(2);
     ofs.close();
-    LOG_CORE_INFO("Saved {} vendor patterns to {}", patterns_.size(), filename);
+    LOG_CORE_DEBUG("Saved {} vendor patterns to {}", patterns_.size(), filename);
     return true;
 }
 

@@ -242,7 +242,7 @@ DnsResult DigResolver::resolve(
         return result;
     }
 
-    LOG_DNS_INFO("Resolving DNS for {}", domain);
+    LOG_DNS_DEBUG("Resolving DNS for {}", domain);
 
     // 查询 A 记录
     if (!query_a_record(domain, result.ip, timeout)) {
@@ -259,7 +259,7 @@ DnsResult DigResolver::resolve(
     }
 
     result.success = true;
-    LOG_DNS_INFO("DNS resolution completed for {}: IP={}, DNS record count={}",
+    LOG_DNS_DEBUG("DNS resolution completed for {}: IP={}, DNS record count={}",
              domain, result.ip, result.dns_records.size());
 
     return result;
@@ -681,7 +681,7 @@ DnsResult CAresResolver::resolve(
         return result;
     }
 
-    LOG_DNS_INFO("Resolving DNS (c-ares) for {}", domain);
+    LOG_DNS_DEBUG("Resolving DNS (c-ares) for {}", domain);
 
     if (!query_a_record(domain, result.ip, timeout)) {
         result.error = "Failed to query A record";
@@ -693,7 +693,7 @@ DnsResult CAresResolver::resolve(
     (void)query_mx_records(domain, result.dns_records, timeout);
 
     result.success = true;
-    LOG_DNS_INFO("DNS resolution completed for {}: IP={}, MX count={}",
+    LOG_DNS_DEBUG("DNS resolution completed for {}: IP={}, MX count={}",
              domain, result.ip, result.dns_records.size());
     return result;
 }
