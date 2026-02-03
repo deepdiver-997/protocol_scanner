@@ -4,6 +4,9 @@ project(protocol_scanner LANGUAGES CXX VERSION 1.0.0)
 # =====================
 # 构建配置
 # =====================
+# 允许 InfoRelease 作为有效的构建类型
+set(CMAKE_CONFIGURATION_TYPES "Debug;Release;InfoRelease" CACHE STRING "" FORCE)
+
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose the type of build: Debug/Release/InfoRelease" FORCE)
 endif()

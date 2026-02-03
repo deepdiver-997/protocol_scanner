@@ -104,6 +104,7 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
 void Scanner::start(const std::string& source_path) {
     stop_ = false;
     input_done_ = false;
+    scan_done_ = false;
     input_source_path_ = source_path;
 
     // 【自动配置优化】配置值为0时，根据系统资源自动计算最优值
@@ -264,7 +265,10 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
 
         // 【关键优化】直接接受 uint32，完全避免字符串转换开销
         auto enqueue_target_uint = [this, &loaded_count, &skip_mode, &skip_until_uint, &skipped_count](uint32_t ip_uint, size_t source_offset) -> bool {
-            if (stop_) return false;
+            if (stop_) {
+                LOG_CORE_ERROR("[enqueue_target_uint] stop_=true detected! loaded_count={}, this should NOT happen during normal scanning!", loaded_count);
+                return false;
+            }
 
             // 【高速路径】使用纯数值比较，零字符串创建
             if (skip_mode) {
@@ -447,13 +451,11 @@ void Scanner::result_handler_thread() {
             }
 
             if (batch.empty()) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                continue;
+            // 【关键修复】队列为空时也要检查 stop 信号，否则会无限循环
+            if (should_stop && result_queue_.empty()) {
+                LOG_CORE_INFO("[result_thread] Stop signal received with empty queue, exiting");
+                break;
             }
-
-            process_batch(batch);
-
-            if (!report_ofs_.is_open()) {
                 std::error_code ec;
                 fs::create_directories(config_.output_dir, ec);
                 std::string out_path = config_.output_dir;
@@ -492,7 +494,11 @@ void Scanner::result_handler_thread() {
             }
 
             if (batch.empty()) {
-                if (should_stop) break;
+                // 【关键修复】非流式模式也要检查 stop 信号
+                if (should_stop) {
+                    LOG_CORE_INFO("[result_thread] Non-stream mode: stop signal with empty batch, exiting");
+                    break;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
@@ -830,7 +836,8 @@ void Scanner::scan_loop() {
         // 检查是否完成（使用前面计算的统计信息）
         bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
         if (all_done) {
-            LOG_CORE_INFO("Scan loop: all work completed, exiting");
+            LOG_CORE_INFO("Scan loop: all work completed, exiting. input_done={}, targets_empty={}, active_sessions={}",
+                         input_done_.load(), targets_.empty(), active_sessions);
             break;
         }
 
@@ -867,6 +874,8 @@ void Scanner::scan_loop() {
         std::lock_guard<std::mutex> lock(stats_mutex_);
         end_time_ = std::chrono::steady_clock::now();
     }
+    scan_done_ = true;
+    reports_cv_.notify_all();
     
     LOG_CORE_INFO("Scan loop completed");
 }
@@ -876,14 +885,14 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
     
     if (timeout.count() > 0) {
         reports_cv_.wait_for(lock, timeout, [this]() {
-            return input_done_ && targets_.empty() && sessions_.empty();
+            return input_done_ && targets_.empty() && scan_done_.load();
         });
     } else if (timeout.count() == 0) {
         // 不等待，直接返回当前结果
     } else {
         // 无限等待
         reports_cv_.wait(lock, [this]() {
-            return input_done_ && targets_.empty() && sessions_.empty();
+            return input_done_ && targets_.empty() && scan_done_.load();
         });
     }
     
@@ -891,6 +900,9 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
     // 这样避免 result_thread_ 的周期性写入和最终写入冲突
     if (result_thread_.joinable()) {
         lock.unlock();  // 释放锁，避免死锁
+        LOG_CORE_INFO("[get_results] Condition met, setting stop_=true to signal result_thread to exit. "
+                      "input_done={}, targets_empty={}, scan_done={}", 
+                      input_done_.load(), targets_.empty(), scan_done_.load());
         stop_ = true;  // 确保 result_handler_thread 退出
         result_thread_.join();
         lock.lock();   // 重新获取锁
@@ -900,6 +912,7 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
 }
 
 void Scanner::stop() {
+    LOG_CORE_WARN("[Scanner::stop] Explicitly called, setting stop_=true");
     stop_ = true;
     targets_cv_.notify_all();
     reports_cv_.notify_all();

@@ -184,6 +184,7 @@ private:
 
     std::atomic<bool> stop_{false};
     std::atomic<bool> input_done_{false};
+    std::atomic<bool> scan_done_{false};
     std::ofstream report_ofs_;
     bool header_written_{false};
 
