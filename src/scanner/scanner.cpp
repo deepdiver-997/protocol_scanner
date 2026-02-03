@@ -790,7 +790,14 @@ void Scanner::scan_loop() {
                     int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
                 } else {
-                    // 无新任务可分配，会话变为空闲
+                    // 【关键修复】无新任务可分配，必须立即 reset 防止下轮重复推送结果
+                    // 使用空 target 重置 session，tasks_total 会被设为 0，使其变为真正的空闲状态
+                    ScanTarget empty_target;
+                    s->reset(
+                        std::move(empty_target),
+                        ScanSession::ProbeMode::ProtocolDefaults,
+                        protocols_
+                    );
                     idle_count++;
                     active_sessions--;
                 }
