@@ -18,10 +18,33 @@
 #include <iomanip>
 #include <sstream>
 #include <functional>
+#include <iterator>
 
 namespace scanner {
 
 namespace fs = std::filesystem;
+
+namespace {
+
+std::string normalize_output_format(std::string fmt) {
+    if (fmt == "txt") return "text";
+    return fmt;
+}
+
+std::string output_extension_for(const std::string& fmt, bool stream_mode) {
+    if (fmt == "json") return stream_mode ? "jsonl" : "json";
+    if (fmt == "csv") return "csv";
+    if (fmt == "required_format") return "txt";
+    if (fmt == "report") return "txt";
+    if (fmt == "text") return "txt";
+    return "txt";
+}
+
+bool needs_text_header(const std::string& fmt) {
+    return fmt == "text" || fmt == "report" || fmt == "required_format";
+}
+
+} // namespace
 
 Scanner::Scanner(const ScannerConfig& config)
     : config_(config) {
@@ -148,11 +171,18 @@ void Scanner::start(const std::string& source_path) {
     
     // 初始化进度管理器
     progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
+    input_source_hash_ = ProgressManager::compute_file_hash(source_path);
+
+    std::error_code output_dir_ec;
+    fs::create_directories(config_.output_dir, output_dir_ec);
+    if (output_dir_ec) {
+        LOG_CORE_WARN("Failed to create output dir '{}': {}", config_.output_dir, output_dir_ec.message());
+    }
 
     // 初始化结果处理器（用于流式写出自定义格式）
     result_handler_ = std::make_unique<ResultHandler>();
     if (result_handler_) {
-        const std::string& fmt = config_.output_format;
+        const std::string fmt = normalize_output_format(config_.output_format);
         if (fmt == "json") result_handler_->set_format(OutputFormat::JSON);
         else if (fmt == "csv") result_handler_->set_format(OutputFormat::CSV);
         else if (fmt == "report") result_handler_->set_format(OutputFormat::REPORT);
@@ -173,7 +203,14 @@ void Scanner::start(const std::string& source_path) {
     bool has_checkpoint = progress_manager_->has_valid_checkpoint() && progress_manager_->load_checkpoint(checkpoint_info_);
     std::cout << "Checkpoint loaded: " << (has_checkpoint ? "yes" : "no") << std::endl;
     if (has_checkpoint) {
-        std::cout << "Resuming from last processed IP: " << checkpoint_info_.last_ip << std::endl;
+        if (!checkpoint_info_.input_file_hash.empty() && checkpoint_info_.input_file_hash != input_source_hash_) {
+            LOG_CORE_WARN("Checkpoint hash mismatch, ignoring stale checkpoint for {}", source_path);
+            checkpoint_info_ = CheckpointInfo{};
+            has_checkpoint = false;
+        }
+    }
+    if (has_checkpoint) {
+        std::cout << "Resuming from committed seq: " << checkpoint_info_.processed_count << std::endl;
         std::cout << "Last processed count: " << checkpoint_info_.processed_count << std::endl;
         std::cout << "Last successful count: " << checkpoint_info_.successful_count << std::endl;
         // 恢复累计值
@@ -238,56 +275,41 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         size_t loaded_count = 0;
         size_t skipped_count = 0;  // 记录跳过的数量
         size_t input_offset = has_checkpoint ? checkpoint_info_.input_file_offset : 0;
+        const uint64_t committed_seq = has_checkpoint ? checkpoint_info_.processed_count : 0;
+        const size_t resume_ordinal = has_checkpoint ? checkpoint_info_.input_offset_ordinal : 0;
+        uint64_t current_seq = (committed_seq >= resume_ordinal) ? (committed_seq - resume_ordinal) : 0;
+        size_t current_offset = static_cast<size_t>(-1);
+        size_t current_offset_ordinal = 0;
 
-        std::string skip_until_ip = has_checkpoint ? checkpoint_info_.last_ip : "";
-        bool skip_mode = !skip_until_ip.empty();
-        
-        // 【优化】将断点 IP 转为数值，避免字符串比较和临时对象创建
-        // 优先使用已保存的 uint32 值（如果可用）
-        uint32_t skip_until_uint = 0;
-        if (has_checkpoint && checkpoint_info_.last_processed_ip_uint > 0) {
-            skip_until_uint = checkpoint_info_.last_processed_ip_uint;
-            LOG_CORE_DEBUG("Using saved checkpoint IP uint32: {}", skip_until_uint);
-        } else if (skip_mode && is_valid_ip_address(skip_until_ip)) {
-            try {
-                skip_until_uint = boost::asio::ip::make_address_v4(skip_until_ip).to_uint();
-                LOG_CORE_DEBUG("Checkpoint IP {} converted to uint32: {}", skip_until_ip, skip_until_uint);
-            } catch (...) {
-                LOG_CORE_WARN("Failed to parse checkpoint IP {}, fallback to string compare", skip_until_ip);
-            }
-        }
-
-        // 【优化】防止断点偏移错位：如果有偏移但没有last_ip（或processed_count=0），
-        // 说明是文件偏移跳转但无需查找特定IP，直接从偏移位置开始处理
-        if (has_checkpoint && input_offset > 0 && skip_until_ip.empty()) {
-            skip_mode = false;  // 直接从偏移开始，无需跳过
-            LOG_CORE_DEBUG("Resuming from file offset {} without IP skip", input_offset);
-        }
-
-        // 【关键优化】直接接受 uint32，完全避免字符串转换开销
-        auto enqueue_target_uint = [this, &loaded_count, &skip_mode, &skip_until_uint, &skipped_count](uint32_t ip_uint, size_t source_offset) -> bool {
+        // 兼容域名 + IP + CIDR 混合输入
+        auto enqueue_target = [this, &loaded_count, &skipped_count, committed_seq, &current_seq, &current_offset, &current_offset_ordinal](const std::string& target_value, size_t source_offset) -> bool {
             if (stop_) {
                 LOG_CORE_ERROR("[enqueue_target_uint] stop_=true detected! loaded_count={}, this should NOT happen during normal scanning!", loaded_count);
                 return false;
             }
 
-            // 【高速路径】使用纯数值比较，零字符串创建
-            if (skip_mode) {
-                if (skip_until_uint > 0) {
-                    if (ip_uint == skip_until_uint) {
-                        skip_mode = false;
-                        LOG_CORE_INFO("Resumed from checkpoint: skipped {} IPs", skipped_count);
-                    } else if (ip_uint < skip_until_uint) {
-                        skipped_count++;
-                        if (skipped_count % 10000 == 0) {
-                            LOG_CORE_DEBUG("Skipping: current={} target={} skipped={}", ip_uint, skip_until_uint, skipped_count);
-                        }
-                        return true;  // 跳过，不创建字符串
-                    } else {
-                        LOG_CORE_WARN("IP uint {} exceeds checkpoint {}, starting from here", ip_uint, skip_until_uint);
-                        skip_mode = false;
-                    }
+            if (source_offset != current_offset) {
+                current_offset = source_offset;
+                current_offset_ordinal = 0;
+            }
+            ++current_offset_ordinal;
+            ++current_seq;
+
+            uint32_t ip_uint = 0;
+            bool is_ip = false;
+            try {
+                ip_uint = boost::asio::ip::make_address_v4(target_value).to_uint();
+                is_ip = true;
+            } catch (...) {
+                is_ip = false;
+            }
+
+            if (current_seq <= committed_seq) {
+                ++skipped_count;
+                if (skipped_count % 10000 == 0) {
+                    LOG_CORE_DEBUG("Skipping committed targets: current_seq={} committed_seq={} skipped={}", current_seq, committed_seq, skipped_count);
                 }
+                return true;
             }
 
             // 【关键优化】直接存储 uint32，延迟字符串化到真正需要时
@@ -321,8 +343,14 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             }
 
             ScanTarget t;
-            t.set_ip(ip_uint);  // 内部会设置 ip_uint 和 domain
+            if (is_ip) {
+                t.set_ip(ip_uint);
+            } else {
+                t.domain = target_value;
+            }
+            t.seq = current_seq;
             t.source_offset = source_offset;
+            t.offset_ordinal = current_offset_ordinal;
 
             targets_.push_back(std::move(t));
             lock.unlock();
@@ -338,11 +366,11 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         };
 
         // blocking call, will return after all targets are loaded
-        // 使用新的 stream_domains_with_offset_uint 来直接传递 uint32
-        std::cout << "[input_thread] Calling stream_domains_with_offset_uint..." << std::endl;
-        LOG_CORE_DEBUG("[input_thread] Calling stream_domains_with_offset_uint, offset={}, skip_until={}", 
-                     input_offset, skip_until_uint);
-        stream_domains_with_offset_uint(source_path, input_offset, enqueue_target_uint, skip_until_uint);
+        // 使用字符串路径以支持域名/IP/CIDR 混合输入
+        std::cout << "[input_thread] Calling stream_domains_with_offset..." << std::endl;
+        LOG_CORE_DEBUG("[input_thread] Calling stream_domains_with_offset, offset={}, committed_seq={}, resume_ordinal={}", 
+             input_offset, committed_seq, resume_ordinal);
+        stream_domains_with_offset(source_path, input_offset, enqueue_target);
         std::cout << "[input_thread] Completed: loaded " << loaded_count << " targets" << std::endl;
         LOG_CORE_DEBUG("[input_thread] Completed: loaded {} targets", loaded_count);
         
@@ -366,9 +394,11 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
         }
 
         input_done_ = true;
+        reports_cv_.notify_all();
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Error in input parser thread: {}", e.what());
         input_done_ = true;
+        reports_cv_.notify_all();
     }
 }
 
@@ -376,9 +406,138 @@ void Scanner::result_handler_thread() {
     std::cout << "[result_thread] Result handler thread started" << std::endl;
     const bool stream_mode = (config_.output_write_mode == "stream");
     auto last_flush = std::chrono::steady_clock::now();
-    std::string last_processed_ip;
+    bool can_clear_checkpoint = true;
+    std::unordered_map<uint64_t, ScanReport> pending_reports;
+    pending_reports.reserve(std::max<size_t>(config_.max_work_count, size_t(1024)));
+    uint64_t next_commit_seq = checkpoint_info_.processed_count + 1;
 
     // ==================== Lambda 函数定义（前置） ====================
+    auto ensure_output_open = [&]() -> bool {
+        if (!stream_mode || report_ofs_.is_open()) {
+            return true;
+        }
+
+        std::error_code ec;
+        fs::create_directories(config_.output_dir, ec);
+        std::string out_path = config_.output_dir;
+        if (!out_path.empty() && out_path.back() != '/') out_path += "/";
+        const std::string fmt = normalize_output_format(config_.output_format);
+        out_path += "scan_results." + output_extension_for(fmt, true);
+        report_ofs_.open(out_path, std::ios::app);
+        if (!report_ofs_.is_open()) {
+            LOG_CORE_ERROR("Cannot open output file: {}", out_path);
+            can_clear_checkpoint = false;
+            return false;
+        }
+        if (!header_written_ && needs_text_header(fmt)) {
+            report_ofs_ << "Scan Results\n";
+            report_ofs_ << "============\n";
+            header_written_ = true;
+        }
+        return true;
+    };
+
+    auto write_committed_reports = [&](const std::vector<ScanReport>& reports) -> bool {
+        if (reports.empty()) return true;
+        if (!stream_mode) return true;
+        if (!ensure_output_open()) {
+            return false;
+        }
+
+        const std::string fmt = normalize_output_format(config_.output_format);
+        if (fmt == "json") {
+            for (const auto& r : reports) {
+                const std::string one = result_handler_->report_to_string(r);
+                if (!one.empty()) {
+                    report_ofs_ << one << '\n';
+                }
+            }
+        } else {
+            const std::string body = result_handler_->reports_to_string(reports);
+            if (!body.empty()) {
+                report_ofs_ << body;
+            }
+        }
+        report_ofs_.flush();
+        if (!report_ofs_) {
+            LOG_CORE_ERROR("Failed to flush output stream for ordered result batch");
+            can_clear_checkpoint = false;
+            return false;
+        }
+        return true;
+    };
+
+    auto commit_ready_reports = [&]() {
+        std::vector<ScanReport> committed_batch;
+        while (true) {
+            auto it = pending_reports.find(next_commit_seq);
+            if (it == pending_reports.end()) {
+                break;
+            }
+            committed_batch.push_back(std::move(it->second));
+            pending_reports.erase(it);
+            ++next_commit_seq;
+        }
+
+        if (committed_batch.empty()) {
+            return;
+        }
+
+        if (!write_committed_reports(committed_batch)) {
+            for (auto& report : committed_batch) {
+                pending_reports.emplace(report.target.seq, std::move(report));
+            }
+            return;
+        }
+
+        size_t committed_successes = 0;
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            for (const auto& r : committed_batch) {
+                bool has_success = false;
+                for (const auto& pr : r.protocols) {
+                    if (pr.accessible) {
+                        has_success = true;
+                        protocol_success_counts_[pr.protocol]++;
+                    }
+                }
+                if (has_success) {
+                    ++committed_successes;
+                }
+            }
+        }
+
+        successful_ips_.fetch_add(committed_successes, std::memory_order_relaxed);
+        processed_count_.store(next_commit_seq - 1, std::memory_order_relaxed);
+
+        if (!stream_mode) {
+            std::lock_guard<std::mutex> lock(reports_mutex_);
+            completed_reports_.insert(
+                completed_reports_.end(),
+                std::make_move_iterator(committed_batch.begin()),
+                std::make_move_iterator(committed_batch.end())
+            );
+        }
+
+        const ScanReport& last_report = stream_mode ? committed_batch.back() : completed_reports_.back();
+        checkpoint_info_.processed_count = processed_count_.load(std::memory_order_relaxed);
+        checkpoint_info_.successful_count = successful_ips_.load(std::memory_order_relaxed);
+        checkpoint_info_.input_file_hash = input_source_hash_;
+        checkpoint_info_.input_file_offset = last_report.target.source_offset;
+        checkpoint_info_.input_offset_ordinal = last_report.target.offset_ordinal;
+
+        auto now_time = std::chrono::system_clock::now();
+        auto time_t = std::chrono::system_clock::to_time_t(now_time);
+        std::stringstream ss;
+        ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
+        checkpoint_info_.timestamp = ss.str();
+
+        if (progress_manager_ && !progress_manager_->save_checkpoint(checkpoint_info_)) {
+            can_clear_checkpoint = false;
+        }
+
+        reports_cv_.notify_one();
+    };
     
     // 处理一批扫描结果：厂商检测、统计更新、checkpoint保存
     // 注意：这个 lambda 同时用于流式和非流式模式
@@ -400,54 +559,11 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        // Step 2: 更新统计 & 保存结果
-        for (const auto& r : batch) {
-            bool has_success = false;
-            {
-                std::lock_guard<std::mutex> lock(stats_mutex_);
-                for (const auto& pr : r.protocols) {
-                    if (pr.accessible) {
-                        has_success = true;
-                        protocol_success_counts_[pr.protocol]++;
-                    }
-                }
-            }
-            if (has_success) {
-                successful_ips_++;
-            }
-
-            processed_count_++;
-            last_processed_ip = r.target.get_ip_string();
-            if (last_processed_ip.empty()) last_processed_ip = r.target.domain;
-            checkpoint_info_.input_file_offset = r.target.source_offset;
+        // Step 2: 按 seq 写入 pending，并推进连续提交前沿
+        for (auto& r : batch) {
+            pending_reports.insert_or_assign(r.target.seq, std::move(r));
         }
-
-        // Step 3: 保存进度（checkpoint）
-        checkpoint_info_.last_ip = last_processed_ip;
-        checkpoint_info_.processed_count = processed_count_.load();
-        checkpoint_info_.successful_count = successful_ips_.load();
-        checkpoint_info_.input_file_hash = ProgressManager::compute_file_hash(input_source_path_);
-        
-        // 保存 IP 的 uint32 形式用于快速断点恢复
-        if (!last_processed_ip.empty() && is_valid_ip_address(last_processed_ip)) {
-            try {
-                checkpoint_info_.last_processed_ip_uint = boost::asio::ip::make_address_v4(last_processed_ip).to_uint();
-            } catch (...) {
-                checkpoint_info_.last_processed_ip_uint = 0;
-            }
-        }
-
-        auto now_time = std::chrono::system_clock::now();
-        auto time_t = std::chrono::system_clock::to_time_t(now_time);
-        std::stringstream ss;
-        ss << std::put_time(std::gmtime(&time_t), "%Y-%m-%d %H:%M:%S");
-        checkpoint_info_.timestamp = ss.str();
-
-        if (progress_manager_) {
-            progress_manager_->save_checkpoint(checkpoint_info_);
-        }
-
-        reports_cv_.notify_one();
+        commit_ready_reports();
     };
 
     // ==================== 主循环 ====================
@@ -480,36 +596,15 @@ void Scanner::result_handler_thread() {
                 count++;
             }
 
-            // Step 2: 处理批次数据（厂商检测、统计、checkpoint）
+            // Step 2: 处理批次数据（厂商检测、按序提交、checkpoint）
             if (!batch.empty()) {
                 process_batch(batch);
             }
 
-            // Step 3: 确保文件已打开，写入头信息（仅第一次）
-            if (!report_ofs_.is_open()) {
-                std::error_code ec;
-                fs::create_directories(config_.output_dir, ec);
-                std::string out_path = config_.output_dir;
-                if (!out_path.empty() && out_path.back() != '/') out_path += "/";
-                out_path += "scan_results.txt";
-                report_ofs_.open(out_path, std::ios::app);
-                if (report_ofs_.is_open() && !header_written_) {
-                    report_ofs_ << "Scan Results\n";
-                    report_ofs_ << "============\n";
-                    header_written_ = true;
-                }
-            }
-
-            // Step 4: 写入处理后的结果到文件
-            if (report_ofs_.is_open() && !batch.empty()) {
-                report_ofs_ << result_handler_->reports_to_string(batch);
-                report_ofs_.flush();
-            }
-
-            // Step 5: 更新 flush 时间
+            // Step 3: 更新 flush 时间
             last_flush = now;
             
-            // Step 6: 检查退出条件：stop 信号已发出 且 队列已清空
+            // Step 4: 检查退出条件：stop 信号已发出 且 队列已清空
             if (should_stop && result_queue_.empty() && batch.empty()) {
                 LOG_CORE_DEBUG("[result_thread] Stream mode: stop signal with empty queue, exiting");
                 break;
@@ -542,11 +637,12 @@ void Scanner::result_handler_thread() {
 
             // 处理一批数据
             process_batch(batch);
-
-            // 累积到完整结果列表
-            std::lock_guard<std::mutex> lock(reports_mutex_);
-            completed_reports_.insert(completed_reports_.end(), batch.begin(), batch.end());
         }
+    }
+
+    if (!pending_reports.empty()) {
+        LOG_CORE_WARN("Result handler exiting with {} uncommitted reports; checkpoint will be retained", pending_reports.size());
+        can_clear_checkpoint = false;
     }
 
     // 确保结束时间已记录
@@ -565,13 +661,16 @@ void Scanner::result_handler_thread() {
     }
 
     if (stream_mode && report_ofs_.is_open()) {
-        report_ofs_ << build_stats_block(stats);
-        if (vendor_detector_) {
-            report_ofs_ << "\nVendor Statistics:\n";
-            auto stats_vec = vendor_detector_->get_statistics();
-            for (const auto& s : stats_vec) {
-                if (s.count > 0) {
-                    report_ofs_ << s.name << ": " << s.count << " servers\n";
+        const std::string fmt = normalize_output_format(config_.output_format);
+        if (needs_text_header(fmt)) {
+            report_ofs_ << build_stats_block(stats);
+            if (vendor_detector_) {
+                report_ofs_ << "\nVendor Statistics:\n";
+                auto stats_vec = vendor_detector_->get_statistics();
+                for (const auto& s : stats_vec) {
+                    if (s.count > 0) {
+                        report_ofs_ << s.name << ": " << s.count << " servers\n";
+                    }
                 }
             }
         }
@@ -586,11 +685,8 @@ void Scanner::result_handler_thread() {
             LOG_CORE_WARN("Failed to create output dir '{}': {}", config_.output_dir, ec.message());
         }
 
-        std::string ext = "txt";
-        const std::string fmt = config_.output_format;
-        if (fmt == "json") ext = "json";
-        else if (fmt == "csv") ext = "csv";
-        else if (fmt == "required_format") ext = "txt";
+        const std::string fmt = normalize_output_format(config_.output_format);
+        const std::string ext = output_extension_for(fmt, false);
 
         std::string out_path = config_.output_dir;
         if (!out_path.empty() && out_path.back() != '/') out_path += "/";
@@ -599,8 +695,13 @@ void Scanner::result_handler_thread() {
         std::ofstream ofs(out_path);
         if (!ofs) {
             LOG_CORE_ERROR("Cannot open output file: {}", out_path);
+            can_clear_checkpoint = false;
         } else {
             ofs << summary_output;
+            if (!ofs) {
+                LOG_CORE_ERROR("Failed while writing output file: {}", out_path);
+                can_clear_checkpoint = false;
+            }
             ofs.close();
             LOG_CORE_DEBUG("Results saved to {}", out_path);
         }
@@ -617,7 +718,7 @@ void Scanner::result_handler_thread() {
         }
     }
 
-    if (progress_manager_) {
+    if (progress_manager_ && can_clear_checkpoint) {
         progress_manager_->clear_checkpoint();
     }
 
@@ -740,17 +841,15 @@ void Scanner::scan_loop() {
 
         // ========== Step 1: 计算本轮任务配额 ==========
         int quota = estimate_quota();
-        int initial_quota = quota;
 
         // ========== Step 2: 批量获取 targets ==========
         std::vector<ScanTarget> batch_targets;
         batch_targets.reserve(std::min(quota, 50));  // 每批最多50个
-        int fetched = fetch_targets_batch(batch_targets, std::min(quota, 50));
+        fetch_targets_batch(batch_targets, std::min(quota, 50));
 
         // ========== Step 3: 单次遍历 sessions 数组 ==========
         // 检查已有会话状态、收集完成结果、为活跃会话分配新任务
         int active_sessions = 0;
-        int idle_count = 0;
         
         for (auto& s : sessions_) {
             if (!s) continue;
@@ -758,7 +857,6 @@ void Scanner::scan_loop() {
             bool is_idle = s->is_idle();
             
             if (is_idle) {
-                idle_count++;
                 continue;
             }
             
@@ -790,15 +888,10 @@ void Scanner::scan_loop() {
                     int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
                 } else {
-                    // 【关键修复】无新任务可分配，必须立即 reset 防止下轮重复推送结果
-                    // 使用空 target 重置 session，tasks_total 会被设为 0，使其变为真正的空闲状态
-                    ScanTarget empty_target;
-                    s->reset(
-                        std::move(empty_target),
-                        ScanSession::ProbeMode::ProtocolDefaults,
-                        protocols_
-                    );
-                    idle_count++;
+                    // 无新任务可分配时，直接将会话标记为空闲。
+                    // 注意：不能 reset(empty_target)，否则 reset 会重新计算任务总数，
+                    // 产生“无 IP 但非空闲”的僵尸会话，导致扫描无法自然结束。
+                    s->set_expected_tasks(0);
                     active_sessions--;
                 }
             } else {
@@ -879,7 +972,7 @@ void Scanner::scan_loop() {
         end_time_ = std::chrono::steady_clock::now();
     }
     scan_done_ = true;
-    // reports_cv_.notify_all();
+    reports_cv_.notify_all();
     
     LOG_CORE_INFO("Scan loop completed");
 }
@@ -987,7 +1080,8 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
                     );
                     s->set_only_success(config_.only_success);
                 } else {
-                    // 【优化】mark_idle 无需调用
+                    // 无新目标时，显式标记为空闲，避免重复推送同一完成结果。
+                    s->set_expected_tasks(0);
                 }
             }
         }

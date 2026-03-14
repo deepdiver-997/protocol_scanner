@@ -58,16 +58,13 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
     std::lock_guard<std::mutex> lock(mutex_);
     
     try {
-        // 保障 processed_count 不倒退：与上次加载值取最大
-        size_t processed_to_store = std::max(info.processed_count, last_loaded_processed_count_);
         nlohmann::json j;
-        j["last_ip"] = info.last_ip;
-        j["processed_count"] = processed_to_store;
+        j["processed_count"] = info.processed_count;
         j["successful_count"] = info.successful_count;
         j["timestamp"] = info.timestamp;
         j["input_file_hash"] = info.input_file_hash;
         j["input_file_offset"] = info.input_file_offset;
-        j["last_processed_ip_uint"] = info.last_processed_ip_uint;  // 新增：保存 uint32 形式
+        j["input_offset_ordinal"] = info.input_offset_ordinal;
         
         // 【原子写入】使用临时文件 + 重命名，防止中断时导致进度文件损坏
         // 1. 先写入临时文件
@@ -99,7 +96,7 @@ bool ProgressManager::save_checkpoint(const CheckpointInfo& info) {
         }
         
         LOG_CORE_DEBUG("Checkpoint saved (atomic): {} ({} processed, {} successful)", 
-                      info.last_ip, processed_to_store, info.successful_count);
+                      checkpoint_file_, info.processed_count, info.successful_count);
         return true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to save checkpoint: {}", e.what());
@@ -126,23 +123,21 @@ bool ProgressManager::load_checkpoint(CheckpointInfo& info) {
         ifs >> j;
         ifs.close();
         
-        info.last_ip = j.value("last_ip", "");
         info.processed_count = j.value("processed_count", 0);
         info.successful_count = j.value("successful_count", 0);
         info.timestamp = j.value("timestamp", "");
         info.input_file_hash = j.value("input_file_hash", "");
         info.input_file_offset = j.value("input_file_offset", 0);
-        info.last_processed_ip_uint = j.value("last_processed_ip_uint", 0);  // 新增：加载 uint32 形式
-        last_loaded_processed_count_ = info.processed_count;
+          info.input_offset_ordinal = j.value("input_offset_ordinal", 0);
         
         LOG_CORE_DEBUG("Checkpoint loaded: {} (processed: {}, successful: {})", 
-                     info.last_ip, info.processed_count, info.successful_count);
+                   checkpoint_file_, info.processed_count, info.successful_count);
         // Even with logging disabled, emit a console hint so systemd/journalctl can capture it.
         std::cout << "[checkpoint] loaded file=" << checkpoint_file_ 
-              << " last_ip=" << info.last_ip
               << " processed=" << info.processed_count
               << " successful=" << info.successful_count
-              << " file_offset=" << info.input_file_offset << std::endl;
+              << " file_offset=" << info.input_file_offset
+              << " offset_ordinal=" << info.input_offset_ordinal << std::endl;
         return true;
     } catch (const std::exception& e) {
         LOG_CORE_ERROR("Failed to load checkpoint: {}", e.what());

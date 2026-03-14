@@ -11,6 +11,7 @@
 #include <memory>
 #include <functional>
 #include <fstream>
+#include <unordered_map>
 #include <thread>
 #include <chrono>
 #include <boost/asio.hpp>
@@ -213,6 +214,7 @@ private:
     // 进度管理
     std::unique_ptr<ProgressManager> progress_manager_;
     std::string input_source_path_;
+    std::string input_source_hash_;
     std::atomic<size_t> processed_count_{0};  // 已处理（完成扫描）的目标数
     CheckpointInfo checkpoint_info_;
 };
@@ -236,14 +238,6 @@ size_t stream_domains_with_offset(
     const std::string& path,
     size_t file_offset,
     const std::function<bool(const std::string&, size_t)>& handle_target
-);
-
-// 【新增】uint32 版本：直接传递数值 IP，完全避免字符串转换（用于断点恢复优化）
-size_t stream_domains_with_offset_uint(
-    const std::string& path,
-    size_t file_offset,
-    const std::function<bool(uint32_t, size_t)>& handle_target,
-    uint32_t skip_until = 0  // 跳过小于此值的所有IP（用于快速断点恢复）
 );
 
 // 检查是否是有效的 IP 地址

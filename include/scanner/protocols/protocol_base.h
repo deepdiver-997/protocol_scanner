@@ -86,29 +86,38 @@ struct ProtocolResult {
 // 扫描目标（优化内存占用：IP 用 uint32 存储）
 struct ScanTarget {
     uint32_t ip_uint = 0;      // IP 地址（uint32，节省内存）
-    std::string domain;         // 域名（对于纯 IP 扫描，domain == ip 字符串化结果）
+    std::string domain;         // 原始输入域名（若输入是纯 IP，则等于该 IP 字符串）
+    std::string resolved_ip;    // 实际用于连接的 IP 字符串（DNS 解析后写入）
+    uint64_t seq = 0;          // 输入顺序序号（用于有序落盘/断点恢复）
     size_t source_offset = 0;  // 输入文件行起始偏移（用于断点恢复加速）
+    size_t offset_ordinal = 0; // 同一 source_offset 下的第几个目标（用于行内恢复）
     
-    // 【关键优化】直接返回缓存的domain字段，避免每次都创建临时字符串
-    // domain字段在set_ip时已经设置为IP字符串，无需重新转换
+    // 直接返回解析后的 IP 字符串缓存。
     const std::string& get_ip_string() const {
-        return domain;
+        return resolved_ip;
     }
     
-    // 设置 IP（同时设置 uint32 和 domain）
+    // 设置 IP（更新连接 IP；仅当 domain 为空时回填 domain）
     void set_ip(uint32_t ip_value) {
         ip_uint = ip_value;
-        domain = boost::asio::ip::make_address_v4(ip_value).to_string();
+        resolved_ip = boost::asio::ip::make_address_v4(ip_value).to_string();
+        if (domain.empty()) {
+            domain = resolved_ip;
+        }
     }
     
     void set_ip(const std::string& ip_str) {
         try {
             ip_uint = boost::asio::ip::make_address_v4(ip_str).to_uint();
-            domain = ip_str;
+            resolved_ip = ip_str;
+            if (domain.empty()) {
+                domain = ip_str;
+            }
         } catch (...) {
             // 非 IP，当作域名
             ip_uint = 0;
             domain = ip_str;
+            resolved_ip.clear();
         }
     }
 };
