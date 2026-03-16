@@ -17,7 +17,8 @@ using steady_timer = asio::steady_timer;
 // IMAP 异步协议实现
 // =====================
 
-struct ProbeContext {
+namespace {
+struct ImapProbeContext {
     ProtocolResult result;
     tcp::socket socket;
     steady_timer timer;
@@ -30,7 +31,7 @@ struct ProbeContext {
     std::string tag;
     bool completed{false};
 
-    ProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
+    ImapProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
         : socket(std::move(exec)), timer(socket.get_executor()),
           buffer(get_global_buffer_pool().acquire()),
           timeout(t), on_complete(std::move(cb)),
@@ -60,6 +61,7 @@ struct ProbeContext {
         }
     }
 };
+} // namespace
 
 void ImapProtocol::async_probe(
     const std::string& target,
@@ -69,7 +71,7 @@ void ImapProtocol::async_probe(
     boost::asio::any_io_executor exec,
     std::function<void(ProtocolResult&&)> on_complete
 ) {
-    auto ctx = std::make_shared<ProbeContext>(std::move(exec), timeout, std::move(on_complete));
+    auto ctx = std::make_shared<ImapProbeContext>(std::move(exec), timeout, std::move(on_complete));
     ctx->result.protocol = name();
     ctx->result.host = target;
     ctx->result.port = port;

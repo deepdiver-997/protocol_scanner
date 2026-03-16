@@ -182,6 +182,18 @@ bool run_startup_inspection(const std::string& domains_file, const ScannerConfig
 ScannerConfig load_config(const string& config_file) {
     ScannerConfig config;
 
+    auto normalize_format = [](std::string fmt) {
+        if (fmt == "txt") return std::string("text");
+        return fmt;
+    };
+
+    auto format_enabled = [&](const std::string& fmt) {
+        if (fmt == "json") return config.output_enable_json;
+        if (fmt == "csv") return config.output_enable_csv;
+        if (fmt == "report") return config.output_enable_report;
+        return true;
+    };
+
     // 尝试从 JSON 文件加载配置
     std::ifstream ifs(config_file);
     if (ifs.is_open()) {
@@ -261,6 +273,30 @@ ScannerConfig load_config(const string& config_file) {
                 if (o.contains("enable_csv")) config.output_enable_csv = o["enable_csv"];
                 if (o.contains("enable_report")) config.output_enable_report = o["enable_report"];
                 if (o.contains("to_console")) config.output_to_console = o["to_console"];
+
+                // output.format 是主格式候选列表，选第一个启用且合法的格式作为主输出
+                if (!config.output_formats.empty()) {
+                    for (const auto& raw_fmt : config.output_formats) {
+                        const std::string fmt = normalize_format(raw_fmt);
+                        if (format_enabled(fmt)) {
+                            config.output_format = fmt;
+                            break;
+                        }
+                    }
+                }
+
+                // 如果主格式被开关禁用，自动回退到可用格式
+                if (!format_enabled(config.output_format)) {
+                    if (config.output_enable_json) {
+                        config.output_format = "json";
+                    } else if (config.output_enable_csv) {
+                        config.output_format = "csv";
+                    } else if (config.output_enable_report) {
+                        config.output_format = "report";
+                    } else {
+                        config.output_format = "required_format";
+                    }
+                }
             }
 
             // ===== Logging 配置 =====
@@ -346,7 +382,7 @@ int main(int argc, char* argv[]) {
             ("protocols,p", po::value<string>(),
              "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH)")
             ("format,f", po::value<string>()->default_value("text"),
-             "Output format (text,json,csv,report)")
+             "Output format (text,json,csv,report,required_format)")
             ("only-success", "Only output successful probes (hide failures)")
             ("no-smtp", "Disable SMTP scanning")
             ("no-pop3", "Disable POP3 scanning")
@@ -514,6 +550,7 @@ int main(int argc, char* argv[]) {
             config.enable_pop3 = false;
             config.enable_imap = false;
             config.enable_http = false;
+            config.enable_ftp = false;
             config.enable_telnet = false;
             config.enable_ssh = false;
             for (auto& p : config.custom_protocols) {
@@ -521,6 +558,7 @@ int main(int argc, char* argv[]) {
                 else if (p == "POP3") config.enable_pop3 = true;
                 else if (p == "IMAP") config.enable_imap = true;
                 else if (p == "HTTP") config.enable_http = true;
+                else if (p == "FTP") config.enable_ftp = true;
                 else if (p == "TELNET") config.enable_telnet = true;
                 else if (p == "SSH") config.enable_ssh = true;
             }

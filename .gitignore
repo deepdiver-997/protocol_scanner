@@ -13,6 +13,9 @@ logs/**
 scan_results.*
 *.json.bak
 *.csv.bak
+*.db
+fingerprint-research/
+fingerprint/
 
 # CMake
 CMakeCache.txt
@@ -47,6 +50,8 @@ Thumbs.db
 *.sublime-*
 .clangd/
 compile_commands.json
+.gitignore
+config/**
 
 # Logs
 *.log

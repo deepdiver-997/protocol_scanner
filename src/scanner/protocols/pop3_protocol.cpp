@@ -17,7 +17,8 @@ using steady_timer = asio::steady_timer;
 // POP3 异步协议实现
 // =====================
 
-struct ProbeContext {
+namespace {
+struct Pop3ProbeContext {
     ProtocolResult result;
     tcp::socket socket;
     steady_timer timer;
@@ -28,7 +29,7 @@ struct ProbeContext {
     std::chrono::steady_clock::time_point start_time;
     bool completed{false};
 
-    ProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
+    Pop3ProbeContext(boost::asio::any_io_executor exec, Timeout t, std::function<void(ProtocolResult&&)> cb)
         : socket(std::move(exec)), timer(socket.get_executor()),
           buffer(get_global_buffer_pool().acquire()),
           timeout(t), on_complete(std::move(cb)) {}
@@ -57,6 +58,7 @@ struct ProbeContext {
         }
     }
 };
+} // namespace
 
 void Pop3Protocol::async_probe(
     const std::string& target,
@@ -66,7 +68,7 @@ void Pop3Protocol::async_probe(
     boost::asio::any_io_executor exec,
     std::function<void(ProtocolResult&&)> on_complete
 ) {
-    auto ctx = std::make_shared<ProbeContext>(std::move(exec), timeout, std::move(on_complete));
+    auto ctx = std::make_shared<Pop3ProbeContext>(std::move(exec), timeout, std::move(on_complete));
     ctx->result.protocol = name();
     ctx->result.host = target;
     ctx->result.port = port;

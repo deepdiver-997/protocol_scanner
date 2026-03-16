@@ -1,7 +1,7 @@
 {
   "scanner": {
-    "io_thread_count": 12,
-    "cpu_thread_count": 4,
+    "io_thread_count": 4,
+    "cpu_thread_count": 1,
     "thread_count": 8,
     "batch_size": 2000,
     "result_batch_size": 200,
@@ -15,17 +15,17 @@
   },
   "protocols": {
     "SMTP": {
-      "enabled": false,
+      "enabled": true,
       "ports": [25, 465, 587, 2525],
       "timeout_ms": 3000
     },
     "POP3": {
-      "enabled": false,
+      "enabled": true,
       "ports": [110, 995],
       "timeout_ms": 3000
     },
     "IMAP": {
-      "enabled": false,
+      "enabled": true,
       "ports": [143, 993],
       "timeout_ms": 3000
     },

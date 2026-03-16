@@ -9,6 +9,114 @@ namespace scanner {
 
 static inline const char* bool_str(bool v) { return v ? "1" : "0"; }
 
+// Replace invalid UTF-8 byte sequences with '?' to keep JSON serialization robust.
+static std::string sanitize_utf8(const std::string& input) {
+    std::string out;
+    out.reserve(input.size());
+
+    const auto* s = reinterpret_cast<const unsigned char*>(input.data());
+    const size_t n = input.size();
+    size_t i = 0;
+
+    while (i < n) {
+        unsigned char c = s[i];
+
+        if (c <= 0x7F) {
+            out.push_back(static_cast<char>(c));
+            ++i;
+            continue;
+        }
+
+        // 2-byte sequence: C2-DF 80-BF
+        if (c >= 0xC2 && c <= 0xDF) {
+            if (i + 1 < n && (s[i + 1] & 0xC0) == 0x80) {
+                out.push_back(static_cast<char>(s[i]));
+                out.push_back(static_cast<char>(s[i + 1]));
+                i += 2;
+            } else {
+                out.push_back('?');
+                ++i;
+            }
+            continue;
+        }
+
+        // 3-byte sequence checks (avoid overlong + surrogates)
+        if (c >= 0xE0 && c <= 0xEF) {
+            if (i + 2 < n) {
+                unsigned char c1 = s[i + 1];
+                unsigned char c2 = s[i + 2];
+                bool c1_ok = (c1 & 0xC0) == 0x80;
+                bool c2_ok = (c2 & 0xC0) == 0x80;
+                bool range_ok = true;
+                if (c == 0xE0) range_ok = c1 >= 0xA0;
+                if (c == 0xED) range_ok = c1 <= 0x9F;
+
+                if (c1_ok && c2_ok && range_ok) {
+                    out.push_back(static_cast<char>(s[i]));
+                    out.push_back(static_cast<char>(s[i + 1]));
+                    out.push_back(static_cast<char>(s[i + 2]));
+                    i += 3;
+                } else {
+                    out.push_back('?');
+                    ++i;
+                }
+            } else {
+                out.push_back('?');
+                ++i;
+            }
+            continue;
+        }
+
+        // 4-byte sequence checks (U+10000..U+10FFFF)
+        if (c >= 0xF0 && c <= 0xF4) {
+            if (i + 3 < n) {
+                unsigned char c1 = s[i + 1];
+                unsigned char c2 = s[i + 2];
+                unsigned char c3 = s[i + 3];
+                bool c1_ok = (c1 & 0xC0) == 0x80;
+                bool c2_ok = (c2 & 0xC0) == 0x80;
+                bool c3_ok = (c3 & 0xC0) == 0x80;
+                bool range_ok = true;
+                if (c == 0xF0) range_ok = c1 >= 0x90;
+                if (c == 0xF4) range_ok = c1 <= 0x8F;
+
+                if (c1_ok && c2_ok && c3_ok && range_ok) {
+                    out.push_back(static_cast<char>(s[i]));
+                    out.push_back(static_cast<char>(s[i + 1]));
+                    out.push_back(static_cast<char>(s[i + 2]));
+                    out.push_back(static_cast<char>(s[i + 3]));
+                    i += 4;
+                } else {
+                    out.push_back('?');
+                    ++i;
+                }
+            } else {
+                out.push_back('?');
+                ++i;
+            }
+            continue;
+        }
+
+        // Invalid leading byte.
+        out.push_back('?');
+        ++i;
+    }
+
+    return out;
+}
+
+static bool has_emittable_protocols(const ScanReport& report, bool only_success) {
+    if (!only_success) {
+        return !report.protocols.empty();
+    }
+    for (const auto& pr : report.protocols) {
+        if (pr.accessible) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // -------------- 文本格式 --------------
 
 std::string ResultHandler::to_text(const ScanReport& report) const {
@@ -98,6 +206,10 @@ std::string ResultHandler::to_required(const std::vector<ScanReport>& reports) c
 // -------------- CSV 格式 --------------
 
 std::string ResultHandler::to_csv(const ScanReport& report) const {
+    if (!has_emittable_protocols(report, only_success_)) {
+        return "";
+    }
+
     std::ostringstream oss;
     // header
     oss << "domain,ip,protocol,host,port,accessible,error,vendor,banner,response_time_ms,details\n";
@@ -130,18 +242,28 @@ std::string ResultHandler::to_csv(const ScanReport& report) const {
 std::string ResultHandler::to_csv(const std::vector<ScanReport>& reports) const {
     std::ostringstream oss;
     oss << "domain,ip,protocol,host,port,accessible,error,vendor,banner,response_time_ms,details\n";
+    bool wrote_row = false;
     for (const auto& rep : reports) {
         ResultHandler tmp; 
         tmp.set_format(OutputFormat::CSV);
         tmp.set_only_success(only_success_);
         std::string body = tmp.to_csv(rep);
+        if (body.empty()) {
+            continue;
+        }
         // 跳过重复 header：取第一行之后
         std::istringstream is(body);
         std::string line; bool first = true;
         while (std::getline(is, line)) {
             if (first) { first = false; continue; }
-            if (!line.empty()) oss << line << '\n';
+            if (!line.empty()) {
+                oss << line << '\n';
+                wrote_row = true;
+            }
         }
+    }
+    if (!wrote_row) {
+        return "";
     }
     return oss.str();
 }
@@ -149,22 +271,26 @@ std::string ResultHandler::to_csv(const std::vector<ScanReport>& reports) const 
 // -------------- JSON 格式 --------------
 
 std::string ResultHandler::to_json(const ScanReport& report) const {
+    if (!has_emittable_protocols(report, only_success_)) {
+        return "";
+    }
+
     nlohmann::json j;
-    j["domain"] = report.target.domain;
-    j["ip"] = report.target.get_ip_string();
+    j["domain"] = sanitize_utf8(report.target.domain);
+    j["ip"] = sanitize_utf8(report.target.get_ip_string());
     j["total_time_ms"] = report.total_time.count();
     j["protocols"] = nlohmann::json::array();
     for (const auto& pr : report.protocols) {
         if (only_success_ && !pr.accessible) continue;
 
         nlohmann::json jp;
-        jp["protocol"] = pr.protocol;
-        jp["host"] = pr.host;
+        jp["protocol"] = sanitize_utf8(pr.protocol);
+        jp["host"] = sanitize_utf8(pr.host);
         jp["port"] = pr.port;
         jp["accessible"] = pr.accessible;
-        jp["error"] = pr.error;
-        jp["banner"] = pr.attrs.banner;
-        jp["vendor"] = pr.attrs.vendor;
+        jp["error"] = sanitize_utf8(pr.error);
+        jp["banner"] = sanitize_utf8(pr.attrs.banner);
+        jp["vendor"] = sanitize_utf8(pr.attrs.vendor);
         jp["response_time_ms"] = pr.attrs.response_time_ms;
         // SMTP attrs
         if (pr.protocol == "SMTP") {
@@ -176,7 +302,7 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
             a["utf8"] = pr.attrs.smtp.utf8;
             a["8bitmime"] = pr.attrs.smtp._8bitmime;
             a["dsn"] = pr.attrs.smtp.dsn;
-            a["auth_methods"] = pr.attrs.smtp.auth_methods;
+            a["auth_methods"] = sanitize_utf8(pr.attrs.smtp.auth_methods);
             jp["smtp"] = a;
         }
         // POP3
@@ -188,7 +314,7 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
             a["top"] = pr.attrs.pop3.top;
             a["pipelining"] = pr.attrs.pop3.pipelining;
             a["uidl"] = pr.attrs.pop3.uidl;
-            a["capabilities"] = pr.attrs.pop3.capabilities;
+            a["capabilities"] = sanitize_utf8(pr.attrs.pop3.capabilities);
             jp["pop3"] = a;
         }
         // IMAP
@@ -203,14 +329,14 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
             a["idle"] = pr.attrs.imap.idle;
             a["unselect"] = pr.attrs.imap.unselect;
             a["uidplus"] = pr.attrs.imap.uidplus;
-            a["capabilities"] = pr.attrs.imap.capabilities;
+            a["capabilities"] = sanitize_utf8(pr.attrs.imap.capabilities);
             jp["imap"] = a;
         }
         // HTTP
         if (pr.protocol == "HTTP") {
             nlohmann::json a;
-            a["server"] = pr.attrs.http.server;
-            a["content_type"] = pr.attrs.http.content_type;
+            a["server"] = sanitize_utf8(pr.attrs.http.server);
+            a["content_type"] = sanitize_utf8(pr.attrs.http.content_type);
             a["status_code"] = pr.attrs.http.status_code;
             jp["http"] = a;
         }
@@ -225,7 +351,11 @@ std::string ResultHandler::to_json(const std::vector<ScanReport>& reports) const
         ResultHandler tmp; 
         tmp.set_format(OutputFormat::JSON);
         tmp.set_only_success(only_success_);
-        j.push_back(nlohmann::json::parse(tmp.to_json(r)));
+        std::string one = tmp.to_json(r);
+        if (one.empty()) {
+            continue;
+        }
+        j.push_back(nlohmann::json::parse(one));
     }
     return j.dump(2);
 }

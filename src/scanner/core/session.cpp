@@ -45,7 +45,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
 
     // 解析域名 -> IP
     std::string current_ip = target_.get_ip_string();
-    if (!current_ip.empty() || target_.ip_uint != 0) {
+    if (target_.ip_uint != 0) {
         // 已经有IP，直接使用
         dns_result_.domain = target_.domain;
         dns_result_.ip = current_ip;
@@ -125,7 +125,7 @@ void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode, const std::vect
 
     // 解析域名 -> IP
     std::string current_ip = target_.get_ip_string();
-    if (!current_ip.empty() || target_.ip_uint != 0) {
+    if (target_.ip_uint != 0) {
         // 已经有IP，直接使用
         dns_result_.domain = target_.domain;
         dns_result_.ip = current_ip;
@@ -199,10 +199,10 @@ bool ScanSession::start_one_probe(
     const boost::asio::any_io_executor& exec,
     Timeout timeout
 ) {
-    std::string current_ip = target_.get_ip_string();
-    if (current_ip.empty()) {
+    if (target_.ip_uint == 0) {
         return false;
     }
+    std::string current_ip = target_.get_ip_string();
 
     // 找到第一个有待扫端口的协议
     std::string chosen_proto;
@@ -283,11 +283,11 @@ int ScanSession::start_all_pending_probes(
 ) {
     // 【优化】批量启动所有待扫描协议任务
     
-    const std::string& ip = target_.get_ip_string();
-    if (ip.empty()) {
+    if (target_.ip_uint == 0) {
         LOG_CORE_DEBUG("[start_all_pending_probes] Skipped: empty IP");
         return 0;
     }
+    const std::string& ip = target_.get_ip_string();
     if (quota <= 0) {
         return 0;
     }
