@@ -137,8 +137,11 @@ endif()
 # =====================
 # 源文件与包含目录
 # =====================
-set(SCANNER_SRCS
+set(SCANNER_MAIN_SRC
     ${CMAKE_SOURCE_DIR}/src/scanner/main.cpp
+)
+
+set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/dns_resolver.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/io_thread_pool.cpp
@@ -149,6 +152,12 @@ set(SCANNER_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/scanner.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/vendor/vendor_detector.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/output/result_handler.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/distributed_queue.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/progress_store.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/orchestrator.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/task_codec.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/kafka_transport.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/distributed/ingestor.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
 )
 
@@ -162,12 +171,30 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ssh_protocol.cpp
 )
 
-set(ALL_SRCS ${SCANNER_SRCS} ${PROTOCOL_SRCS})
+set(ALL_CORE_SRCS ${SCANNER_CORE_SRCS} ${PROTOCOL_SRCS})
 
-add_executable(scanner ${ALL_SRCS})
+add_library(scanner_core STATIC ${ALL_CORE_SRCS})
+add_executable(scanner ${SCANNER_MAIN_SRC})
+add_executable(scanner_distributed ${CMAKE_SOURCE_DIR}/src/scanner/distributed_main.cpp)
+add_executable(scanner_ingest ${CMAKE_SOURCE_DIR}/src/scanner/distributed_ingest_main.cpp)
 
 # 项目内头文件
+target_include_directories(scanner_core PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/OuterLib
+)
+
 target_include_directories(scanner PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/OuterLib
+)
+
+target_include_directories(scanner_distributed PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/OuterLib
+)
+
+target_include_directories(scanner_ingest PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/OuterLib
 )
@@ -176,38 +203,58 @@ target_include_directories(scanner PRIVATE
 # 链接库
 # =====================
 if(TARGET Boost::system AND TARGET Boost::program_options)
-    target_link_libraries(scanner PRIVATE Boost::system Boost::program_options Boost::filesystem)
+    target_link_libraries(scanner_core PUBLIC Boost::system Boost::program_options Boost::filesystem)
 else()
-    target_link_libraries(scanner PRIVATE ${Boost_LIBRARIES})
+    target_link_libraries(scanner_core PUBLIC ${Boost_LIBRARIES})
 endif()
 
-target_link_libraries(scanner PRIVATE Threads::Threads)
+target_link_libraries(scanner_core PUBLIC Threads::Threads)
 
 # fmt (spdlog 依赖)
 find_package(fmt CONFIG QUIET)
 if(TARGET fmt::fmt)
-    target_link_libraries(scanner PRIVATE fmt::fmt)
+    target_link_libraries(scanner_core PUBLIC fmt::fmt)
 endif()
 
 # nlohmann/json
 if(JSON_TARGET)
-    target_link_libraries(scanner PRIVATE ${JSON_TARGET})
+    target_link_libraries(scanner_core PUBLIC ${JSON_TARGET})
+endif()
+
+# librdkafka (optional)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(RDKAFKA QUIET IMPORTED_TARGET rdkafka)
+    if(RDKAFKA_FOUND)
+        target_link_libraries(scanner_core PUBLIC PkgConfig::RDKAFKA)
+        target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_KAFKA=1)
+    else()
+        target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_KAFKA=0)
+    endif()
+else()
+    target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_KAFKA=0)
 endif()
 
 if(NOT ENABLE_LOGGING)
-    target_compile_definitions(scanner PRIVATE SCANNER_DISABLE_LOGGING)
+    target_compile_definitions(scanner_core PUBLIC SCANNER_DISABLE_LOGGING)
 endif()
 
 # c-ares linking
-target_link_libraries(scanner PRIVATE ${CARES_TARGET})
+target_link_libraries(scanner_core PUBLIC ${CARES_TARGET})
+
+target_link_libraries(scanner PRIVATE scanner_core)
+target_link_libraries(scanner_distributed PRIVATE scanner_core)
+target_link_libraries(scanner_ingest PRIVATE scanner_core)
 
 # 要求特性
+target_compile_features(scanner_core PUBLIC cxx_std_20)
 target_compile_features(scanner PRIVATE cxx_std_20)
+target_compile_features(scanner_distributed PRIVATE cxx_std_20)
+target_compile_features(scanner_ingest PRIVATE cxx_std_20)
 
 # =====================
 # 安装规则
 # =====================
-install(TARGETS scanner RUNTIME DESTINATION bin)
+install(TARGETS scanner scanner_distributed scanner_ingest RUNTIME DESTINATION bin)
 install(DIRECTORY config/ DESTINATION share/protocol-scanner/config)
 
 # =====================

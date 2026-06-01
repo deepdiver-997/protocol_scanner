@@ -33,13 +33,10 @@ temp/
 *~
 *.bak
 *.docx
-docs/
-docs/*.md
-docs/*.txt
-docs/count*
-!ARCHITECTURE.md
-!CONFIGURATION.md
-
+docs/analysis
+docs/hidden
+docs/internal_others
+docs/program
 # OS specific
 .DS_Store
 Thumbs.db

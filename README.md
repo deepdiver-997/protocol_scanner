@@ -227,57 +227,129 @@ Key Optimization: Streaming CIDR expansion (lazy evaluation)
 
 ```
 protocol-scanner/
-├── CMakeLists.txt                 # Build configuration
+├── CMakeLists.txt                 # Build configuration (3 targets: scanner / scanner_distributed / scanner_ingest)
 ├── build.sh.in                    # Build script template
+├── TODO.md                        # Task tracking list
 ├── README.md                      # This file
-├── PRODUCTION_BUILD.md            # Deployment guide (3 build modes)
-├── PRODUCTION_BUILD_REFACTORING.md # Technical details
 │
 ├── include/scanner/
 │   ├── common/
-│   │   ├── logger.h              # Compile-time conditional logging
-│   │   ├── buffer_pool.h         # Memory-efficient buffer management
-│   │   ├── thread_pool.h         # Generic thread pool
-│   │   └── io_thread_pool.h      # I/O thread pool (async)
+│   │   ├── logger.h              # Compile-time conditional logging (spdlog)
+│   │   ├── buffer_pool.h         # Fixed-size 1KB buffer pool with RAII handles
+│   │   ├── thread_pool.h         # CPU-bound task thread pool
+│   │   └── io_thread_pool.h      # I/O thread pool (Boost.Asio, load-balanced)
 │   │
 │   ├── core/
-│   │   ├── scanner.h             # Main coordinator
-│   │   ├── session.h             # Per-IP session manager
-│   │   ├── task_queue.h          # Thread-safe task queue
-│   │   ├── progress_manager.h    # Checkpoint/resume
-│   │   └── crash_inspector.h     # Diagnostics
+│   │   ├── scanner.h             # Main coordinator (orchestrates scan lifecycle)
+│   │   ├── session.h             # Per-target lifecycle (DNS → probe → complete)
+│   │   ├── task_queue.h          # Thread-safe blocking queue
+│   │   ├── progress_manager.h    # Checkpoint/resume for crash recovery
+│   │   └── crash_inspector.h     # Startup diagnostics & integrity check
 │   │
 │   ├── protocols/
-│   │   ├── probe_context.h       # Shared probe state
-│   │   ├── smtp_protocol.h
-│   │   ├── pop3_protocol.h
-│   │   ├── imap_protocol.h
-│   │   ├── http_protocol.h
-│   │   ├── ftp_protocol.h
-│   │   ├── telnet_protocol.h
-│   │   └── ssh_protocol.h
+│   │   ├── protocol_base.h       # IProtocol interface + ProtocolFactory + REGISTER_PROTOCOL macro
+│   │   ├── probe_context.h       # Shared probe state (deprecated, per-protocol contexts preferred)
+│   │   ├── smtp_protocol.h       # SMTP/ESMTP (EHLO + capabilities)
+│   │   ├── pop3_protocol.h       # POP3 (CAPA + STLS)
+│   │   ├── imap_protocol.h       # IMAP (CAPABILITY + STARTTLS)
+│   │   ├── http_protocol.h       # HTTP/HTTPS (GET + Server header)
+│   │   ├── ftp_protocol.h        # FTP (banner + FEAT)
+│   │   ├── telnet_protocol.h     # Telnet (banner + IAC negotiation)
+│   │   └── ssh_protocol.h        # SSH (version banner)
+│   │
+│   ├── dns/
+│   │   ├── dns_resolver.h        # IDnsResolver interface + DnsResolverFactory (c-ares / dig)
 │   │
 │   ├── network/
-│   │   ├── dns_resolver.h        # c-ares based DNS (MX records)
-│   │   ├── port_scanner.h        # TCP port probing
-│   │   └── latency_manager.h     # Adaptive timeout
+│   │   ├── port_scanner.h        # TCP port probing (sync + async)
+│   │   └── latency_manager.h     # Adaptive timeout management
 │   │
 │   ├── vendor/
-│   │   └── vendor_detector.h     # Identify Gmail, Outlook, etc.
+│   │   └── vendor_detector.h     # Regex-based service vendor detection (vendors.json)
 │   │
-│   └── output/
-│       └── result_handler.h      # JSON/CSV/Text streaming output
+│   ├── output/
+│   │   └── result_handler.h      # JSON/CSV/TEXT/REPORT output formatting
+│   │
+│   └── distributed/
+│       ├── orchestrator.h        # Task distribution & worker coordination
+│       ├── distributed_queue.h   # Batch queue (ready/inflight/failed/done)
+│       ├── kafka_transport.h     # Kafka message transport (optional)
+│       ├── task_codec.h          # Task serialization/deserialization
+│       ├── progress_store.h      # Distributed progress persistence
+│       ├── ingestor.h            # Data ingestion
+│       └── task_types.h          # Shared type definitions
 │
 ├── src/scanner/
-│   ├── main.cpp                  # Entry point
-│   ├── scanner.cpp               # Main loop (scan_loop)
+│   ├── main.cpp                  # Entry point (single-machine mode)
+│   ├── distributed_main.cpp      # Entry point (distributed worker mode)
+│   ├── distributed_ingest_main.cpp # Entry point (data ingestion mode)
+│   ├── scanner.cpp               # Main loop (scan_loop, session orchestration)
 │   ├── dns_resolver.cpp
 │   ├── utils.cpp
 │   │
 │   ├── common/
-│   │   └── thread_pool.cpp
+│   │   ├── thread_pool.cpp
 │   │   └── io_thread_pool.cpp
 │   │
+│   ├── core/
+│   │   ├── session.cpp
+│   │   ├── crash_inspector.cpp
+│   │   └── progress_manager.cpp
+│   │
+│   ├── protocols/
+│   │   ├── smtp_protocol.cpp
+│   │   ├── pop3_protocol.cpp
+│   │   ├── imap_protocol.cpp
+│   │   ├── http_protocol.cpp
+│   │   ├── ftp_protocol.cpp
+│   │   ├── telnet_protocol.cpp
+│   │   └── ssh_protocol.cpp
+│   │
+│   ├── output/
+│   │   └── result_handler.cpp
+│   │
+│   ├── vendor/
+│   │   └── vendor_detector.cpp
+│   │
+│   └── distributed/
+│       ├── distributed_queue.cpp
+│       ├── orchestrator.cpp
+│       ├── kafka_transport.cpp
+│       ├── task_codec.cpp
+│       ├── progress_store.cpp
+│       └── ingestor.cpp
+│
+├── config/
+│   ├── scanner_config.json        # Scanner configuration
+│   ├── scanner_config_2gb_optimized.json  # Low-memory config
+│   └── vendors.json               # Vendor fingerprint patterns
+│
+├── fingerprint/                   # Python fingerprint pipeline
+│   ├── import_scan_raw.py
+│   ├── prepare_fingerprint_stage1.py
+│   ├── build_fingerprint_stage3.py
+│   ├── build_dual_library_stage4.py
+│   └── ...
+│
+├── docs/
+│   ├── ARCHITECTURE.md           # System architecture documentation
+│   ├── CONFIGURATION.md           # Configuration guide
+│   ├── comparison_with_smtp_banner.md  # SMTP Banner项目对比分析
+│   ├── CROSS_COMPILE.md           # Cross-compilation guide (Mac → Linux)
+│   ├── PRODUCTION_BUILD.md        # Production build guide (3 modes)
+│   ├── MEMORY_LEAK_FIXES.md       # Memory leak fix summary
+│   ├── MEMORY_LEAK_FIXES_CHECKLIST.md  # Leak fix checklist
+│   ├── QUICK_REFERENCE.md         # CLI quick reference
+│   ├── LOGGING_GUIDE.md           # Logging system guide
+│   ├── buffer_optimization.md
+│   ├── memory_optimization_guide.md
+│   └── ... (other analysis docs)
+│
+├── tests/
+│   ├── chaos_distributed_local.sh # Distributed chaos test
+│   └── ... (benchmarks)
+│
+└── result/                        # Output directory (gitignored)
 │   ├── core/
 │   │   ├── session.cpp
 │   │   ├── progress_manager.cpp
