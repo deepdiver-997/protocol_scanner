@@ -52,14 +52,19 @@ endif()
 # macOS 常见包管理前缀，便于 find_package 找到 Homebrew 安装
 if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH /opt/homebrew /usr/local)
-    # 硬编码 fallback：如果/opt/homebrew存在但CMAKE_PREFIX_PATH没生效，直接用BOOST_ROOT兜底
-    if(NOT DEFINED BOOST_ROOT AND EXISTS /opt/homebrew/include/boost)
-        set(BOOST_ROOT /opt/homebrew)
-        message(STATUS "Detected Boost at /opt/homebrew, setting BOOST_ROOT")
-    endif()
-    if(NOT DEFINED BOOST_ROOT AND EXISTS /usr/local/include/boost)
-        set(BOOST_ROOT /usr/local)
-        message(STATUS "Detected Boost at /usr/local, setting BOOST_ROOT")
+    # CMake >=4.0 移除了 FindBoost 模块，需要 CONFIG 模式
+    # Boost 1.70+ 自带 BoostConfig.cmake, Homebrew 装在 Cellar 下
+    if(EXISTS /opt/homebrew/Cellar/boost)
+        # 取最新版本 Cellar 目录
+        file(GLOB _boost_cellar_dirs /opt/homebrew/Cellar/boost/*)
+        list(SORT _boost_cellar_dirs)
+        list(REVERSE _boost_cellar_dirs)
+        if(_boost_cellar_dirs)
+            list(GET _boost_cellar_dirs 0 _boost_cellar_dir)
+            get_filename_component(_boost_version "${_boost_cellar_dir}" NAME)
+            set(Boost_DIR "${_boost_cellar_dir}/lib/cmake/Boost-${_boost_version}")
+            message(STATUS "Detected Boost CMake config at ${Boost_DIR}")
+        endif()
     endif()
 endif()
 
@@ -75,7 +80,12 @@ set(_deb_hint "Debian/Ubuntu: sudo apt-get install libboost-all-dev libc-ares-de
 find_package(PkgConfig QUIET)
 
 # Boost
-find_package(Boost COMPONENTS system program_options filesystem QUIET)
+# CMake >=4.0 需要 CONFIG 模式；<4.0 用 MODULE 模式回退
+find_package(Boost CONFIG COMPONENTS system program_options filesystem QUIET)
+if(NOT Boost_FOUND)
+    # 低版本 CMake 回退到 MODULE 模式（FindBoost.cmake）
+    find_package(Boost COMPONENTS system program_options filesystem QUIET)
+endif()
 if(NOT Boost_FOUND)
     set(_boost_help "Boost not found. ${_mac_hint}; ${_deb_hint}")
     message(FATAL_ERROR "${_boost_help}")

@@ -67,6 +67,20 @@ struct ProtocolAttributes {
         int status_code = 0;
     } http;
 
+    // FTP 属性
+    struct {
+        std::string features;       // FEAT 响应原始文本
+        bool utf8 = false;          // UTF8 编码支持
+        bool auth_tls = false;      // AUTH TLS
+        bool auth_ssl = false;      // AUTH SSL
+        bool size_cmd = false;      // SIZE 命令
+        bool mdtm = false;          // MDTM 修改时间
+        bool mldst = false;         // MLSD/MLST 目录列表
+        bool tvfs = false;          // TVFS 虚拟文件系统
+        bool xcrc = false;          // XCRC 校验
+        bool xcup = false;          // XCUP 上级目录
+    } ftp;
+
     // 通用属性
     std::string banner;           // 服务欢迎消息
     std::string vendor;          // 服务商标识
