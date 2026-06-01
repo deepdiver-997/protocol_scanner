@@ -188,6 +188,7 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ftp_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/telnet_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ssh_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/redis_protocol.cpp
 )
 
 set(ALL_CORE_SRCS ${SCANNER_CORE_SRCS} ${PROTOCOL_SRCS})
