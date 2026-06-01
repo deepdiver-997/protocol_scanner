@@ -84,7 +84,7 @@ void SshProtocol::async_probe(
     ctx->socket.set_option(no_delay_opt, set_ec);
 
     ctx->timer.expires_after(timeout);
-    ctx->timer.async_wait([ctx](const boost::system::error_code& ec) {
+    ctx->timer.async_wait([this, ctx](const boost::system::error_code& ec) {
         if (!ec) {
             ctx->finish_error("SSH probe timed out");
         }
@@ -98,7 +98,7 @@ void SshProtocol::async_probe(
     }
 
     tcp::endpoint endpoint(address, port);
-    ctx->socket.async_connect(endpoint, [ctx](const boost::system::error_code& ec) {
+    ctx->socket.async_connect(endpoint, [this, ctx](const boost::system::error_code& ec) {
         LOG_CORE_WARN("[SSH] async_connect callback called for {}:{}, ec={}", ctx->result.host, ctx->result.port, ec.message());
         if (ec) {
             ctx->finish_error("Connection failed: " + ec.message());
@@ -109,7 +109,7 @@ void SshProtocol::async_probe(
         // 使用固定缓冲区读取（最多 PROTOCOL_BUFFER_SIZE 字节）
         ctx->socket.async_read_some(
             asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
-            [ctx](const boost::system::error_code& ec, std::size_t bytes_transferred) {
+            [this, ctx](const boost::system::error_code& ec, std::size_t bytes_transferred) {
                 LOG_CORE_WARN("[SSH] async_read_some callback called for {}:{}, bytes={}, ec={}", ctx->result.host, ctx->result.port, bytes_transferred, ec.message());
                 if (ec) {
                     ctx->finish_error("Read SSH version failed: " + ec.message());
@@ -142,6 +142,7 @@ void SshProtocol::async_probe(
                 }
                 
                 ctx->result.attrs.banner = banner;
+                parse_capabilities(banner, ctx->result.attrs);
                 LOG_CORE_WARN("[SSH] Calling finish_success for {}:{} with banner: {}", ctx->result.host, ctx->result.port, banner);
                 ctx->finish_success();
             });
@@ -149,6 +150,54 @@ void SshProtocol::async_probe(
     LOG_CORE_WARN("[SSH] async_probe submitted for {}:{}", target, port);
 }
 
-void SshProtocol::parse_capabilities(const std::string&, ProtocolAttributes&) {}
+void SshProtocol::parse_capabilities(
+    const std::string& response,
+    ProtocolAttributes& attrs
+) {
+    // SSH banner format: "SSH-{proto_ver}-{software_id}[ {comments}]"
+    // Examples: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3"
+    //           "SSH-2.0-dropbear_2022.82"
+    //           "SSH-1.99-OpenSSH_3.8.1p1"
+    if (response.size() < 6 || response.compare(0, 4, "SSH-") != 0) {
+        return;
+    }
+
+    attrs.ssh.version_string = response;
+
+    // Extract protocol version: SSH-{version}-...
+    auto first_dash = response.find('-');
+    auto second_dash = response.find('-', first_dash + 1);
+    if (first_dash == std::string::npos || second_dash == std::string::npos) {
+        return;
+    }
+    attrs.ssh.protocol_version = response.substr(first_dash + 1, second_dash - first_dash - 1);
+
+    // Extract software identifier: after second dash, before space or end
+    auto space_pos = response.find(' ', second_dash + 1);
+    std::string sw_id;
+    if (space_pos != std::string::npos) {
+        sw_id = response.substr(second_dash + 1, space_pos - second_dash - 1);
+    } else {
+        sw_id = response.substr(second_dash + 1);
+    }
+
+    if (sw_id.empty()) return;
+
+    // Split by underscore: OpenSSH_8.9p1 -> software="OpenSSH", version="8.9p1"
+    auto underscore = sw_id.find('_');
+    if (underscore != std::string::npos) {
+        attrs.ssh.software = sw_id.substr(0, underscore);
+        attrs.ssh.version = sw_id.substr(underscore + 1);
+    } else {
+        // No underscore (e.g. Cisco-1.25), try last dash
+        auto last_dash = sw_id.rfind('-');
+        if (last_dash != std::string::npos && last_dash > 0) {
+            attrs.ssh.software = sw_id.substr(0, last_dash);
+            attrs.ssh.version = sw_id.substr(last_dash + 1);
+        } else {
+            attrs.ssh.software = sw_id;
+        }
+    }
+}
 
 } // namespace scanner

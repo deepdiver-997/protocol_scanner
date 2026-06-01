@@ -81,6 +81,14 @@ struct ProtocolAttributes {
         bool xcup = false;          // XCUP 上级目录
     } ftp;
 
+    // SSH 属性
+    struct {
+        std::string version_string;  // 完整版本标识，如 "SSH-2.0-OpenSSH_8.9p1"
+        std::string software;        // 软件名，如 "OpenSSH"
+        std::string version;         // 版本号，如 "8.9p1"
+        std::string protocol_version; // 协议版本，如 "2.0"
+    } ssh;
+
     // 通用属性
     std::string banner;           // 服务欢迎消息
     bool banner_truncated = false; // banner是否因缓冲区满而被截断
