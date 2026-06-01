@@ -52,6 +52,15 @@ endif()
 # macOS 常见包管理前缀，便于 find_package 找到 Homebrew 安装
 if(APPLE)
     list(APPEND CMAKE_PREFIX_PATH /opt/homebrew /usr/local)
+    # 硬编码 fallback：如果/opt/homebrew存在但CMAKE_PREFIX_PATH没生效，直接用BOOST_ROOT兜底
+    if(NOT DEFINED BOOST_ROOT AND EXISTS /opt/homebrew/include/boost)
+        set(BOOST_ROOT /opt/homebrew)
+        message(STATUS "Detected Boost at /opt/homebrew, setting BOOST_ROOT")
+    endif()
+    if(NOT DEFINED BOOST_ROOT AND EXISTS /usr/local/include/boost)
+        set(BOOST_ROOT /usr/local)
+        message(STATUS "Detected Boost at /usr/local, setting BOOST_ROOT")
+    endif()
 endif()
 
 # 可选：禁用日志
