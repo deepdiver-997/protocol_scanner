@@ -83,6 +83,7 @@ struct ProtocolAttributes {
 
     // 通用属性
     std::string banner;           // 服务欢迎消息
+    bool banner_truncated = false; // banner是否因缓冲区满而被截断
     std::string vendor;          // 服务商标识
     double response_time_ms = 0.0; // 响应时间
 };

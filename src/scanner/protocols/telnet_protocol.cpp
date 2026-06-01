@@ -107,6 +107,10 @@ void TelnetProtocol::async_probe(
                     return;
                 }
                 ctx->bytes_read = bytes_transferred;
+                // 检查缓冲区是否被填满（可能被截断）
+                if (bytes_transferred >= ctx->buffer->size()) {
+                    ctx->result.attrs.banner_truncated = true;
+                }
                 // 只取前256字节作为banner（足够识别）
                 size_t banner_len = std::min(bytes_transferred, size_t(256));
                 std::string banner(ctx->buffer->data(), banner_len);

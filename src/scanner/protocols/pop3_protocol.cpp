@@ -113,6 +113,10 @@ void Pop3Protocol::async_probe(
                 }
 
                 ctx->bytes_read = bytes_transferred;
+                // 检查缓冲区是否被填满（可能被截断）
+                if (bytes_transferred >= ctx->buffer->size()) {
+                    ctx->result.attrs.banner_truncated = true;
+                }
                 auto* data = ctx->buffer->data();
                 
                 // 查找 \r\n
