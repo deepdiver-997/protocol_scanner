@@ -728,237 +728,111 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
-
-    // 预分配 sessions_ 以减少重分配开销
     sessions_.reserve(std::min(config_.max_work_count, size_t(10000)));
-
-    // 内存监控：记录容器大小以便诊断内存问题
     auto last_mem_log = std::chrono::steady_clock::now();
 
-    // ==================== Lambda 函数定义（前置） ====================
-    
-    // 计算本轮可分配的任务配额
-    // 每轮循环最多启动的任务数，考虑最大并发会话限制
     auto estimate_quota = [this]() -> int {
         int max_concurrent = static_cast<int>(config_.max_work_count);
-        if (max_concurrent <= 0) max_concurrent = 1000; // 默认上限
-        
-        // 统计当前活跃会话数
-        int active_sessions = 0;
+        if (max_concurrent <= 0) max_concurrent = 1000;
+        int active = 0;
         for (const auto& s : sessions_) {
-            if (s && !s->is_done()) {
-                ++active_sessions;
-            }
+            if (s && !s->idle()) ++active;
         }
-        int available_slots = max_concurrent - active_sessions;
-        
-        // 每轮最多启动 batch_size 个新任务，但不能超过可用槽位
-        int quota = std::min(config_.batch_size, std::max(1, available_slots));
-        return quota;
+        return std::min(config_.batch_size, std::max(1, max_concurrent - active));
     };
 
-    // 等待结果队列有足够空间，避免队列溢出
-    auto wait_result_slot = [this]() {
-        if (config_.result_queue_max_size == 0) return;
-        while (!stop_ && result_queue_.size() >= config_.result_queue_max_size) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-    };
-
-    // 根据负载动态计算睡眠时间，避免固定睡眠导致过多系统调用
-    auto calculate_adaptive_sleep = [](int active_sessions, bool has_targets) -> std::chrono::milliseconds {
-        if (has_targets) {
-            // 有待扫描目标 → 保持高频率消费（1ms）
-            return std::chrono::milliseconds(1);
-        }
-        
-        // 无待扫描目标，根据活跃会话数调整
-        if (active_sessions > 0) {
-            // 还有活跃会话在运行 → 中等频率（3ms）
-            return std::chrono::milliseconds(3);
-        }
-        
-        // 无待扫描目标且无活跃会话 → 可能即将结束（10ms）
-        return std::chrono::milliseconds(10);
-    };
-
-    // 批量获取 targets，减少锁竞争
-    // 从队列尾部取出最多 max_count 个 target，返回实际获取数量
-    auto fetch_targets_batch = [this](std::vector<ScanTarget>& out, int max_count) -> int {
+    auto fetch_targets = [this](std::vector<ScanTarget>& out, int max_count) -> int {
         std::lock_guard<std::mutex> lock(targets_mutex_);
         int count = 0;
         while (count < max_count && !targets_.empty()) {
             out.push_back(std::move(targets_.back()));
             targets_.pop_back();
-            count++;
+            ++count;
         }
-        if (count > 0) {
-            targets_cv_.notify_one();
-        }
+        if (count > 0) targets_cv_.notify_one();
         return count;
     };
 
-    // ==================== 主循环 ====================
-
     while (true) {
-        // 【优化】在循环开头一次性获取当前时间，避免多次系统调用
-        auto loop_now = std::chrono::steady_clock::now();
-        
-        // 每10秒记录一次内存状态（用于诊断内存占用问题）
-        if (std::chrono::duration_cast<std::chrono::seconds>(loop_now - last_mem_log).count() >= 10) {
-            
-            #ifdef ENABLE_LOGGING_INFO
-            size_t pending_sessions = 0;
-            for (auto& s : sessions_) {
-                if (s && !s->is_done() && s->tasks_completed() < s->tasks_total()) {
-                    pending_sessions++;
-                }
-            }
-            const auto pool_stats = get_global_buffer_pool().get_stats();
-            #endif
-            
-            LOG_CORE_DEBUG(
-                "[Memory] sessions_total={} sessions_pending={} targets_queue={} result_queue={} | "
-                "[BufferPool] size={} available={} hit_rate={:.2f}%",
-                sessions_.size(),
-                #ifdef ENABLE_LOGGING_INFO
-                pending_sessions,
-                #else
-                0,
-                #endif
-                targets_.size(),
-                result_queue_.size(),
-                #ifdef ENABLE_LOGGING_INFO
-                pool_stats.pool_size,
-                pool_stats.available,
-                pool_stats.hit_rate * 100.0
-                #else
-                0, 0, 0.0
-                #endif
-            );
-            last_mem_log = loop_now;
+        auto now = std::chrono::steady_clock::now();
+        if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
+            LOG_CORE_DEBUG("[scan_loop] sessions={} targets={} result_queue={}",
+                sessions_.size(), targets_.size(), result_queue_.size());
+            last_mem_log = now;
         }
 
-        // ========== Step 1: 计算本轮任务配额 ==========
         int quota = estimate_quota();
+        std::vector<ScanTarget> batch;
+        fetch_targets(batch, std::min(quota, 50));
 
-        // ========== Step 2: 批量获取 targets ==========
-        std::vector<ScanTarget> batch_targets;
-        batch_targets.reserve(std::min(quota, 50));  // 每批最多50个
-        fetch_targets_batch(batch_targets, std::min(quota, 50));
-
-        // ========== Step 3: 单次遍历 sessions 数组 ==========
-        // 检查已有会话状态、收集完成结果、为活跃会话分配新任务
         int active_sessions = 0;
-        
+
+        // Step 1: iterate sessions, check completion + reuse
         for (auto& s : sessions_) {
-            if (!s) continue;
-            
-            bool is_idle = !s || s->is_done();
-            
-            if (is_idle || !s) {
-                continue;
-            }
-            
+            if (!s || s->idle()) continue;
             active_sessions++;
-            
-            // 检查是否完成：若完成，先提交结果到结果队列
-            if (s->is_done()) {
-                // Results already pushed to global queue by callback
-                ScanReport rep;
-                rep.target = s->target();
-                rep.total_time = config_.probe_timeout;
-                wait_result_slot();
-                result_queue_.push(rep);
-                LOG_CORE_DEBUG("[scan_loop] Session completed, pushed result for {}", s->target().get_ip_string());
-                
-                // 尝试分配新任务给这个已完成的 session
-                // Session results already in global queue, no reuse
-                s.reset();
-                active_sessions--;
-            } else {
-                // 为现有活跃 session 继续启动待扫协议（如果还有配额）
-                if (quota > 0) {
+
+            if (s->ready_to_release()) {
+                LOG_CORE_DEBUG("[scan_loop] Session done for {}", s->target().get_ip_string());
+                // Result already pushed to global queue by probe callback
+                // Just reuse the session with a new target
+                if (!batch.empty()) {
+                    ScanTarget t = std::move(batch.back());
+                    batch.pop_back();
+                    s->reset(std::move(t),
+                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                               : ScanSession::ProbeMode::ProtocolDefaults,
+                        protocols_);
                     int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
+                } else {
+                    s->set_expected_tasks(0);
+                    active_sessions--;
                 }
+            } else if (quota > 0) {
+                int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                quota -= started;
             }
-            
-            if (quota == 0) break;  // 配额用完，退出遍历
+            if (quota == 0) break;
         }
 
-        // ========== Step 4: 创建新 session 并分配批量 targets ==========
-        // 注意：到这里为止，所有已有的 session 都应该是繁忙的
-        // （如果有空闲的，已在 Step 3 中复用了）
+        // Step 2: create new sessions for remaining batch targets
         int max_sessions = config_.max_work_count > 0
-            ? static_cast<int>(config_.max_work_count)
-            : std::max(1, config_.batch_size);
+            ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
 
-        // 遍历批量 targets，为每个创建新 session（无需查找空闲 session）
-        for (auto& t : batch_targets) {
-            if (quota == 0) break;  // 配额用完，退出创建
-            
+        for (auto& t : batch) {
             if (active_sessions >= max_sessions) {
-                // 已达最大会话数，无法创建新 session，把 target 放回队列
                 std::lock_guard<std::mutex> lock(targets_mutex_);
                 targets_.push_back(std::move(t));
                 continue;
             }
-
-            // 直接创建新 session
-            auto sess = std::make_unique<ScanSession>(
-                t,
+            auto sess = std::make_unique<ScanSession>(t,
                 dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                config_.dns_timeout,
-                config_.probe_timeout,
-                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
-                protocols_,
-                result_queue_
-            );
-            
+                config_.dns_timeout, config_.probe_timeout,
+                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                       : ScanSession::ProbeMode::ProtocolDefaults,
+                protocols_, result_queue_);
             int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
             quota -= started;
             sessions_.push_back(std::move(sess));
             active_sessions++;
         }
 
-        // 把未分配的 targets 放回队列
-        if (!batch_targets.empty()) {
-            std::lock_guard<std::mutex> lock(targets_mutex_);
-            for (auto& t : batch_targets) {
-                targets_.push_back(std::move(t));
-            }
-            targets_cv_.notify_one();
-        }
-
-        // ========== Step 5: 检查完成条件 ==========
-        bool all_done = input_done_ && targets_.empty() && active_sessions == 0;
-        if (all_done) {
-            LOG_CORE_DEBUG("Scan loop: all work completed, exiting. input_done={}, targets_empty={}, active_sessions={}",
-                         input_done_.load(), targets_.empty(), active_sessions);
+        // Step 3: check exit condition
+        if (input_done_ && targets_.empty() && active_sessions == 0) {
+            LOG_CORE_DEBUG("Scan loop: all done, exiting");
             break;
         }
 
-        // ========== Step 6: 动态睡眠 ==========
-        bool has_targets = false;
-        {
-            std::lock_guard<std::mutex> lock(targets_mutex_);
-            has_targets = !targets_.empty();
-        }
-        
-        auto sleep_duration = calculate_adaptive_sleep(active_sessions, has_targets);
-        std::this_thread::sleep_for(sleep_duration);
+        std::this_thread::sleep_for(active_sessions > 0 ? std::chrono::milliseconds(3)
+                                                        : std::chrono::milliseconds(10));
     }
 
-    {
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        end_time_ = std::chrono::steady_clock::now();
-    }
     scan_done_ = true;
     reports_cv_.notify_all();
-    
     LOG_CORE_INFO("Scan loop completed");
 }
+
 
 std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) {
     std::unique_lock<std::mutex> lock(reports_mutex_);
@@ -1028,7 +902,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
         );
         session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, 10);
         // Wait...
-        for (int i = 0; i < 100 && !session->is_done(); i++) {
+        for (int i = 0; i < 100 && !session->ready_to_release(); i++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }

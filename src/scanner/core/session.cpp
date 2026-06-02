@@ -1,6 +1,5 @@
 #include "scanner/core/session.h"
 #include "scanner/common/logger.h"
-#include <sstream>
 
 namespace scanner {
 
@@ -19,31 +18,42 @@ ScanSession::ScanSession(
     , probe_timeout_(probe_timeout)
     , result_queue_(&result_queue)
 {
-    set_probe_mode(mode);
-    results_.reserve(protocols.size());
+    reset(target, mode, protocols);
+}
 
-    // DNS 解析（如果还没有 IP）
-    if (target_.ip_uint == 0 && !target_.domain.empty() && dns_resolver_) {
-        int max_retries = 2;
-        for (int i = 0; i <= max_retries; ++i) {
+void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode,
+                         const std::vector<std::unique_ptr<IProtocol>>& protocols) {
+    target_ = new_target;
+    generation_.fetch_add(1, std::memory_order_release);
+    tasks_total_.store(0, std::memory_order_relaxed);
+    tasks_completed_.store(0, std::memory_order_relaxed);
+    results_.clear();
+    available_ports_.clear();
+
+    // DNS 解析
+    if (target_.ip_uint != 0) {
+        dns_result_.domain = target_.domain;
+        dns_result_.ip = target_.get_ip_string();
+        dns_result_.success = true;
+    } else if (!target_.domain.empty() && dns_resolver_) {
+        for (int i = 0; i <= 2; ++i) {
             DnsResult dr = dns_resolver_->resolve(target_.domain, dns_timeout_);
             dns_result_ = dr;
             if (dr.success && !dr.ip.empty()) {
                 target_.set_ip(dr.ip);
-                LOG_DNS_DEBUG("DNS resolved {} -> {}", target_.domain, dr.ip);
                 break;
             } else if (!dr.ip.empty()) {
                 target_.set_ip(dr.ip);
                 break;
             }
-            if (i < max_retries) {
-                LOG_DNS_WARN("DNS resolution failed for {}, retrying ({}/{})...",
-                             target_.domain, i + 1, max_retries);
-            }
+        }
+        if (target_.get_ip_string().empty()) {
+            set_error("DNS Resolution Failed");
         }
     }
 
-    // 构造 available_ports_（所有协议默认端口的并集）
+    probe_mode_ = mode;
+
     for (const auto& p : protocols) {
         if (!p) continue;
         for (auto d : p->default_ports()) {
@@ -53,7 +63,6 @@ ScanSession::ScanSession(
         }
     }
 
-    // 初始化协议端口队列、计算任务总数
     init_protocol_queues(protocols);
 
     std::size_t total = 0;
@@ -72,6 +81,12 @@ ScanSession::ScanSession(
     tasks_total_.store(total, std::memory_order_relaxed);
 }
 
+void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode,
+                         const std::vector<std::unique_ptr<IProtocol>>& protocols) {
+    ScanTarget copy = std::move(new_target);
+    reset(copy, mode, protocols);
+}
+
 void ScanSession::init_protocol_queues(const std::vector<std::unique_ptr<IProtocol>>& protocols) {
     protocol_port_queues_.clear();
     for (const auto& p : protocols) {
@@ -79,7 +94,6 @@ void ScanSession::init_protocol_queues(const std::vector<std::unique_ptr<IProtoc
         protocol_port_queues_[p->name()] = std::queue<Port>();
     }
     if (available_ports_.empty()) return;
-
     for (const auto& p : protocols) {
         if (!p) continue;
         auto& q = protocol_port_queues_[p->name()];
@@ -117,12 +131,7 @@ int ScanSession::start_all_pending_probes(
     Timeout timeout,
     int quota
 ) {
-    if (target_.ip_uint == 0) {
-        LOG_CORE_DEBUG("[session] Skipped: empty IP for {}", target_.domain);
-        // 没有 IP，标记为 done（失败）
-        done_.store(true, std::memory_order_release);
-        return 0;
-    }
+    if (target_.ip_uint == 0) return 0;
 
     const std::string& ip = target_.get_ip_string();
     const std::string target_name = target_.domain.empty() ? ip : target_.domain;
@@ -133,9 +142,10 @@ int ScanSession::start_all_pending_probes(
     }
 
     Timeout base_timeout = timeout;
-    if (base_timeout.count() == 0) {
-        base_timeout = std::chrono::milliseconds(5000);
-    }
+    if (base_timeout.count() == 0) base_timeout = std::chrono::milliseconds(5000);
+
+    auto gen = generation_.load(std::memory_order_acquire);
+    auto grq = result_queue_;
 
     int launched = 0;
     while (launched < quota) {
@@ -156,29 +166,26 @@ int ScanSession::start_all_pending_probes(
         if (it != proto_map.end()) proto_ptr = it->second;
         if (!proto_ptr) break;
 
-        Timeout effective_timeout = base_timeout;
+        Timeout effective = timeout;
         Timeout proto_default = proto_ptr->default_timeout();
-        if (proto_default > effective_timeout) effective_timeout = proto_default;
+        if (proto_default > effective) effective = proto_default;
 
-        auto grq = result_queue_;  // capture raw ptr (valid as long as session lives)
-
-        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout,
-                          target_name, ip, proto_name = chosen_proto, grq]() {
+        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective,
+                          target_name, ip, proto_name = chosen_proto, grq, gen]() {
             proto_ptr->async_probe(
                 target_name, ip, port, timeout, exec,
-                [this, proto_name, grq](ProtocolResult&& r) {
-                    // 保存结果
+                [this, proto_name, grq, gen](ProtocolResult&& r) {
+                    if (generation_.load(std::memory_order_acquire) != gen) return;
+
                     {
                         std::lock_guard<std::mutex> lock(results_mutex_);
                         results_.push_back(std::move(r));
                     }
 
-                    // 检查是否是最后一个任务
-                    auto completed = tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1;
+                    auto comp = tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1;
                     auto total = tasks_total_.load(std::memory_order_acquire);
 
-                    if (completed >= total) {
-                        // 最后完成的任务负责聚合结果并推送到全局队列
+                    if (comp >= total) {
                         ScanReport rep;
                         rep.target = target_;
                         rep.total_time = std::chrono::milliseconds(0);
@@ -187,20 +194,12 @@ int ScanSession::start_all_pending_probes(
                             rep.protocols = std::move(results_);
                         }
                         grq->push(std::move(rep));
-                        done_.store(true, std::memory_order_release);
                     }
                 }
             );
         });
-
         ++launched;
     }
-
-    // 如果没有启动任何任务，立即标记完成（避免僵尸 session）
-    if (launched == 0 && tasks_total_.load() == 0) {
-        done_.store(true, std::memory_order_release);
-    }
-
     return launched;
 }
 
