@@ -1,4 +1,5 @@
 #include "scanner/protocols/ftp_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
@@ -246,8 +247,7 @@ void FtpProtocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    // 空实现——FEAT 通过 features_accum 在 context 中传递
-    // 实际解析在 async_probe 完成后由外部统一处理
+    // FTP banner parsed inline in async_probe, parse_capabilities not used
     (void)response;
     (void)attrs;
 }

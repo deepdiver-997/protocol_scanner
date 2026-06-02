@@ -6,7 +6,7 @@
 namespace scanner {
 
 // =====================
-// SMTP banner 解析器
+// SMTP
 // =====================
 
 struct SmtpBannerInfo {
@@ -23,10 +23,8 @@ struct SmtpBannerInfo {
 SmtpBannerInfo parse_smtp_banner(const std::string& ehlo_response);
 
 // =====================
-// SSH 版本行解析器
+// SSH
 // =====================
-// 输入: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3"
-// 输出: { version_string, software, version, protocol_version }
 
 struct SshVersionInfo {
     std::string version_string;
@@ -38,10 +36,8 @@ struct SshVersionInfo {
 SshVersionInfo parse_ssh_version(const std::string& banner);
 
 // =====================
-// FTP FEAT 响应解析器
+// FTP
 // =====================
-// 输入: "AUTH TLS, UTF8, SIZE, MDTM"
-// 输出: 各 feature 的 bool 值
 
 struct FtpFeatInfo {
     std::string features;
@@ -55,5 +51,55 @@ struct FtpFeatInfo {
 };
 
 FtpFeatInfo parse_ftp_feat(const std::string& features_csv);
+
+// =====================
+// POP3
+// =====================
+
+struct Pop3GreetingInfo {
+    std::string banner;
+    bool stls = false;
+    bool sasl = false;
+    bool user = false;
+    bool top = false;
+    bool pipelining = false;
+    bool uidl = false;
+    std::string capabilities; // raw capability list
+};
+
+Pop3GreetingInfo parse_pop3_greeting(const std::string& response);
+
+// =====================
+// IMAP
+// =====================
+
+struct ImapCapabilityInfo {
+    std::string banner;
+    bool imap4rev1 = false;
+    bool starttls = false;
+    bool auth_plain = false;
+    bool auth_login = false;
+    bool idle = false;
+    bool quota = false;
+    bool acl = false;
+    bool unselect = false;
+    bool uidplus = false;
+    std::string capabilities; // raw capability string
+};
+
+ImapCapabilityInfo parse_imap_capability(const std::string& greeting);
+
+// =====================
+// HTTP
+// =====================
+
+struct HttpResponseInfo {
+    std::string status_line;
+    int status_code = 0;
+    std::string server;
+    std::string content_type;
+};
+
+HttpResponseInfo parse_http_response(const std::string& response);
 
 } // namespace scanner

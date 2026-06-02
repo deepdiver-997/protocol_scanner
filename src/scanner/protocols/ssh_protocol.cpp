@@ -1,4 +1,5 @@
 #include "scanner/protocols/ssh_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/read.hpp>
@@ -154,50 +155,11 @@ void SshProtocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    // SSH banner format: "SSH-{proto_ver}-{software_id}[ {comments}]"
-    // Examples: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3"
-    //           "SSH-2.0-dropbear_2022.82"
-    //           "SSH-1.99-OpenSSH_3.8.1p1"
-    if (response.size() < 6 || response.compare(0, 4, "SSH-") != 0) {
-        return;
-    }
-
-    attrs.ssh.version_string = response;
-
-    // Extract protocol version: SSH-{version}-...
-    auto first_dash = response.find('-');
-    auto second_dash = response.find('-', first_dash + 1);
-    if (first_dash == std::string::npos || second_dash == std::string::npos) {
-        return;
-    }
-    attrs.ssh.protocol_version = response.substr(first_dash + 1, second_dash - first_dash - 1);
-
-    // Extract software identifier: after second dash, before space or end
-    auto space_pos = response.find(' ', second_dash + 1);
-    std::string sw_id;
-    if (space_pos != std::string::npos) {
-        sw_id = response.substr(second_dash + 1, space_pos - second_dash - 1);
-    } else {
-        sw_id = response.substr(second_dash + 1);
-    }
-
-    if (sw_id.empty()) return;
-
-    // Split by underscore: OpenSSH_8.9p1 -> software="OpenSSH", version="8.9p1"
-    auto underscore = sw_id.find('_');
-    if (underscore != std::string::npos) {
-        attrs.ssh.software = sw_id.substr(0, underscore);
-        attrs.ssh.version = sw_id.substr(underscore + 1);
-    } else {
-        // No underscore (e.g. Cisco-1.25), try last dash
-        auto last_dash = sw_id.rfind('-');
-        if (last_dash != std::string::npos && last_dash > 0) {
-            attrs.ssh.software = sw_id.substr(0, last_dash);
-            attrs.ssh.version = sw_id.substr(last_dash + 1);
-        } else {
-            attrs.ssh.software = sw_id;
-        }
-    }
+    auto info = parse_ssh_version(response);
+    attrs.ssh.version_string = info.version_string;
+    attrs.ssh.software = info.software;
+    attrs.ssh.version = info.version;
+    attrs.ssh.protocol_version = info.protocol_version;
 }
 
 } // namespace scanner
