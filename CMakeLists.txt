@@ -293,4 +293,11 @@ message(STATUS "Dependency summary:")
 message(STATUS "  Boost: ${Boost_VERSION}")
 message(STATUS "  nlohmann_json: ${nlohmann_json_VERSION}")
 message(STATUS "  fmt: ${fmt_VERSION}")
+
+# =====================
+# 单元测试（可独立验证 probe 是否工作）
+# =====================
+add_executable(probe_test _unit_test.cpp)
+target_link_libraries(probe_test PRIVATE scanner_core)
+target_compile_features(probe_test PRIVATE cxx_std_20)
 message(STATUS "  c-ares target: ${CARES_TARGET}")
