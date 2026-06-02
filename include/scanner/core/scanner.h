@@ -50,6 +50,8 @@ struct ScannerConfig {
     bool enable_ftp = true;
     bool enable_telnet = false;
     bool enable_ssh = true;
+    bool enable_redis = false;
+    bool enable_rtsp = false;
     bool scan_all_ports = false;
 
     // DNS 配置
