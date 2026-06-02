@@ -6,7 +6,7 @@
 namespace scanner {
 
 // =====================
-// SMTP banner 解析器（纯函数）
+// SMTP banner 解析器
 // =====================
 
 struct SmtpBannerInfo {
@@ -18,11 +18,42 @@ struct SmtpBannerInfo {
     bool _8bitmime = false;
     bool dsn = false;
     std::string auth_methods;
-    std::string vendor_hint;   // 从 banner 中提取的厂商线索
 };
 
-// 输入: EHLO 响应完整文本（多行 "250" 响应）
-// 返回: 结构化解析结果
 SmtpBannerInfo parse_smtp_banner(const std::string& ehlo_response);
+
+// =====================
+// SSH 版本行解析器
+// =====================
+// 输入: "SSH-2.0-OpenSSH_8.9p1 Ubuntu-3"
+// 输出: { version_string, software, version, protocol_version }
+
+struct SshVersionInfo {
+    std::string version_string;
+    std::string software;
+    std::string version;
+    std::string protocol_version;
+};
+
+SshVersionInfo parse_ssh_version(const std::string& banner);
+
+// =====================
+// FTP FEAT 响应解析器
+// =====================
+// 输入: "AUTH TLS, UTF8, SIZE, MDTM"
+// 输出: 各 feature 的 bool 值
+
+struct FtpFeatInfo {
+    std::string features;
+    bool utf8 = false;
+    bool auth_tls = false;
+    bool auth_ssl = false;
+    bool size_cmd = false;
+    bool mdtm = false;
+    bool mldst = false;
+    bool tvfs = false;
+};
+
+FtpFeatInfo parse_ftp_feat(const std::string& features_csv);
 
 } // namespace scanner
