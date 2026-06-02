@@ -303,3 +303,145 @@ Central configuration struct with ~30 parameters controlling:
 | nlohmann-json | 3.11+ | Config + output serialization |
 | spdlog | 1.11+ | Structured logging |
 | librdkafka | (optional) | Kafka transport for distributed mode |
+
+
+---
+
+## 架构决策记录 (ADR)
+
+### ADR-1: 全局 BufferPool vs. 每 Session 独立缓冲区
+
+**状态**: 采用全局 BufferPool
+
+**问题**: 每个协议探测需要一个 1KB 缓冲区。是使用全局池还是让每个 ScanSession 自己管理缓冲区？
+
+**考量**:
+- 一个 session 的多个协议 probe 是**并发**的（SSH + FTP + HTTP 同时跑），不可能共用一个缓冲区
+- 即使 session 自管，也需要一个迷你池——不如直接用全局池
+- 全局池 3000 个预分配 1KB buffer，RAII `BufferHandle` 自动归还，命中率接近 100%
+- mutex 开销仅 ~100ns/次，相比网络 I/O 完全可忽略
+
+**结论**: 全局 `BufferPool` 是正确设计，不需要改为每 session 管理。
+
+---
+
+### ADR-2: Session 复用 vs. 每 Probe 独立执行单元
+
+**状态**: 保持 session 复用（固定池）
+
+**问题**: 当一个 session 包含 SSH(19ms) 和 HTTP(5s timeout) 时，HTTP 是否拖慢 SSH 的吞吐？
+
+**分析**:
+- 瓶颈是 HTTP 的 5s timeout，不是 session 复用方式
+- 1000 target × HTTP 5s / 10 并发 = 500s，SSH 那 2s 完全是噪声
+- 无论 session 复用还是每 probe 独立，总时间相同，因为最慢的协议决定了整体进度
+- session 复用的好处：进度追踪简单、断点恢复清晰、target 派发统一
+
+**结论**: 当前 session 复用架构合理。不需要拆成每协议独立 session。如果某个场景只需 SSH，用 `--enable-ssh` 单独跑即可。
+
+---
+
+### ADR-3: generation 计数器解决 reset 并发竞争
+
+**状态**: 已实现
+
+**问题**: `ScanSession::reset()` 复用 session 对象时，旧 probe 的异步 callback 仍持有 `this` 指针。在 reset 后触发会导致任务计数混乱（`tasks_completed++`加到新 session 上）。
+
+**方案**: 每 reset 递增 `generation_` 原子计数器。probe callback 在提交时捕获当前 gen，触发时比对——不匹配则忽略。
+
+```cpp
+// session.h
+std::atomic<uint64_t> generation_{0};
+
+// session.cpp: reset() 时递增
+generation_.fetch_add(1, std::memory_order_release);
+
+// 提交 probe 时捕获 gen
+auto gen = generation_.load(std::memory_order_acquire);
+scan_pool.submit([this, gen, ...]() {
+    proto_ptr->async_probe(..., [this, gen](ProtocolResult&& r) {
+        if (generation_.load(std::memory_order_acquire) != gen) return;  // 过期
+        // 正常处理结果
+    });
+});
+```
+
+---
+
+### ADR-4: Probe callback 直接入全局结果队列
+
+**状态**: 已实现
+
+**问题**: 原设计中 probe callback 入 session 本地结果队列 → scan_loop 轮询 `ready_to_release()` → 手动取出转发到全局队列。多了一层无必要的轮询和转发。
+
+**方案**: probe callback 中最慢的那个（最后一个完成）直接组装 `ScanReport` 并 push 到全局 `result_queue_`。scan_loop 不再转发结果，只负责 session 复用。
+
+```cpp
+// 最后一个完成的 probe callback:
+if (completed >= total) {
+    ScanReport rep;
+    rep.target = target_;
+    { std::lock_guard results_mutex; rep.protocols = std::move(results_); }
+    grq->push(std::move(rep));  // 直接入全局队列
+}
+```
+
+**效果**: 去掉 50+ 行结果转发逻辑，减少一次线程间数据搬移。
+
+---
+
+### ADR-5: 水平扩展方案 — 分布式模式
+
+**状态**: 已实现（可选）
+
+**问题**: 单机扫描受限于带宽和文件描述符，无法覆盖全球 IPv4 空间。
+
+**方案**: 提供分布式架构（位于 `distributed/` 目录）：
+
+- **Orchestrator**: 任务分发和工作节点协调
+- **DistributedBatchQueue**: 四状态队列（ready/inflight/failed/done），租约机制防重复
+- **KafkaTransport**: 可选 Kafka 消息后端
+- **ProgressStore**: 进度持久化
+- **TaskCodec**: 任务序列化
+
+构建三个独立可执行文件：
+- `scanner` — 单机模式入口
+- `scanner_distributed` — 分布式工作节点
+- `scanner_ingest` — 数据摄入
+
+三者在 `scanner_core` 静态库上共享核心探测逻辑。
+
+---
+
+## 性能模型
+
+### 单机吞吐量估算
+
+```
+吞吐量 = 并发数 / 平均探测时间
+
+假设:
+- 并发 session: 500 (受 RLIMIT_NOFILE 限制)
+- SSH 平均探测时间: 50ms (含网络往返)
+- HTTP 平均探测时间: 200ms
+- FTP 平均探测时间: 100ms
+
+SSH-only:  500 / 0.05 = 10,000 targets/sec
+HTTP-only: 500 / 0.2  =  2,500 targets/sec
+FTP-only:  500 / 0.1  =  5,000 targets/sec
+混合:      500 / 0.35 ≈  1,428 targets/sec (最慢协议主导)
+```
+
+实际瓶颈通常在网络带宽和 DNS 解析速度，而非 CPU 或内存。
+
+---
+
+## 关键指标 (SLA)
+
+| 指标 | 目标 | 测量方式 |
+|------|------|---------|
+| 单目标 SSH 探测 | ≤ 100ms | 单元测试 |
+| 单目标 HTTP 探测 | ≤ 300ms | 单元测试 |
+| 100万 IP 扫描冷启动 | ≤ 1s | 基准测试 |
+| 内存峰值 (100万 IP) | ≤ 200MB | 基准测试 |
+| 断点恢复损失 | ≤ 1% 重扫率 | 混沌测试 |

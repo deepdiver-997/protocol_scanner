@@ -8,7 +8,7 @@
 
 ## ✨ Key Features
 
-- **🔍 Multi-Protocol Support**: SMTP, POP3, IMAP, HTTP, FTP, Telnet, SSH
+- **🔍 Multi-Protocol Support**: SMTP, POP3, IMAP, HTTP, FTP, Telnet, SSH, Redis
 - **🚀 Ultra-High Performance**: Dual-layer thread architecture (scan pool + I/O pool)
 - **📊 Large-Scale Scanning**: Streaming CIDR parsing, no memory preload
 - **🧩 Modular Design**: Easy to add new protocols via inheritance

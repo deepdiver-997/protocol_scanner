@@ -1,1 +1,1 @@
-OpenSSH: 10 servers
+OpenSSH: 1 servers
