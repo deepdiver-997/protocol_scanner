@@ -1,0 +1,17 @@
+# 快测清单 — 快速验证各协议是否正常
+# 用法: ./build-fix/scanner --domains _test_quick.txt --scan --enable-ssh --enable-http --enable-ftp --timeout 10000 --threads 4
+
+# SSH 测试 — 你的服务器
+120.24.169.213
+
+# HTTP 测试
+example.com
+
+# FTP 测试 (匿名FTP)
+ftp.gnu.org
+
+# SMTP 测试 (QQ邮箱)
+qq.com
+
+# 多协议混合 (google)
+gmail.com

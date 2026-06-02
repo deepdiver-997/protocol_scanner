@@ -1,0 +1,32 @@
+# 全面测试清单 — 覆盖所有支持的协议
+# 用法: bash _test_full.sh
+
+# SSH 测试
+120.24.169.213
+
+# HTTP 测试
+example.com
+httpbin.org
+
+# FTP 测试
+ftp.gnu.org
+ftp://ftp.gnu.org
+
+# SMTP 测试
+gmail-smtp-in.l.google.com
+qq.com
+163.com
+
+# POP3 测试
+pop.qq.com
+pop.163.com
+
+# IMAP 测试
+imap.qq.com
+imap.gmail.com
+
+# TELNET 测试 (很多公共telnet已关闭, 可测试本地)
+# river.com  # 你的其他服务器
+
+# REDIS 测试 (如果有自建Redis)
+# 127.0.0.1

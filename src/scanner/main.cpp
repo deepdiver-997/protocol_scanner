@@ -580,6 +580,9 @@ int main(int argc, char* argv[]) {
             // 兼容简写：txt -> text
             if (fmt == "txt") fmt = "text";
             config.output_format = fmt;
+            config.output_formats.clear();
+            config.output_formats.push_back(fmt);
+            config.output_to_console = true;
             LOG_CORE_DEBUG("Output format override from command line: {}", config.output_format);
         }
 
@@ -650,7 +653,22 @@ int main(int argc, char* argv[]) {
             
             auto end_tp = std::chrono::steady_clock::now();
             auto duration = std::chrono::duration_cast<std::chrono::seconds>(end_tp - start_tp);
-            (void)duration; // silence unused when logging disabled
+            
+            // 打印结果摘要到 stdout
+            auto stats = scanner.get_statistics();
+            std::cout << "\n=== Scan Complete ===" << std::endl;
+            std::cout << "Total targets: " << stats.total_targets << std::endl;
+            std::cout << "Successful IPs: " << stats.successful_ips << std::endl;
+            std::cout << "Duration: " << duration.count() << "s" << std::endl;
+            if (!stats.protocol_counts.empty()) {
+                std::cout << "Protocols:" << std::endl;
+                for (const auto& [proto, count] : stats.protocol_counts) {
+                    std::cout << "  " << proto << ": " << count << std::endl;
+                }
+            }
+            std::cout << "Results: " << config.output_dir << "/scan_results.*" << std::endl;
+            std::cout << "========================" << std::endl;
+            
             LOG_CORE_INFO("Scan completed in {} seconds", duration.count());
 
             return 0;
