@@ -89,6 +89,15 @@ struct ProtocolAttributes {
         std::string protocol_version; // 协议版本，如 "2.0"
     } ssh;
 
+    // MySQL 属性
+    struct {
+        std::string version_string;  // 原始版本字符串，如 "8.0.35"
+        std::string version;         // 版本号
+        uint8_t protocol_version = 0; // MySQL 协议版本 (通常 10)
+        std::string auth_plugin;     // 认证插件名，如 "caching_sha2_password"
+        uint32_t capability_flags = 0; // 能力标志
+    } mysql;
+
     // 通用属性
     std::string banner;           // 服务欢迎消息
     bool banner_truncated = false; // banner是否因缓冲区满而被截断

@@ -199,4 +199,57 @@ HttpResponseInfo parse_http_response(const std::string& response) {
     return info;
 }
 
+// =====================
+// MySQL
+// =====================
+
+MysqlHandshakeInfo parse_mysql_handshake(const char* data, size_t len) {
+    MysqlHandshakeInfo info;
+    if (len < 1) return info;
+
+    // Byte 0: protocol version (e.g. 10 = MySQL 5.x/8.x)
+    info.protocol_version = static_cast<uint8_t>(data[0]);
+    if (len < 2) return info;
+
+    // Bytes 1+: null-terminated version string
+    size_t version_end = 1;
+    while (version_end < len && data[version_end] != '\0') ++version_end;
+    if (version_end > 1) {
+        info.version_string = std::string(data + 1, version_end - 1);
+        info.version = info.version_string;
+    }
+
+    // After version string null: 4 bytes connection ID, 8 bytes auth data...
+    // Capability flags at offset: after version null + 4 + 8
+    size_t cap_offset = version_end + 1 + 4 + 8; // null + conn_id + auth-part1
+    if (cap_offset + 2 <= len) {
+        info.capability_flags = static_cast<uint32_t>(
+            static_cast<uint8_t>(data[cap_offset]) |
+            (static_cast<uint8_t>(data[cap_offset + 1]) << 8)
+        );
+    }
+
+    // Auth plugin name (at end of handshake, variable offset)
+    // For MySQL 8.x, auth-plugin-data-len at offset version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1
+    size_t auth_plugin_offset = version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1 + 10;
+    if (auth_plugin_offset < len) {
+        size_t aplen = static_cast<uint8_t>(data[version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1]);
+        if (aplen > 0) {
+            auth_plugin_offset = version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1 + 10 + aplen - 8;
+            // auth-plugin-data-part-2 is (aplen - 8) bytes
+            // After that is null-terminated auth plugin name
+            size_t ap_name_start = auth_plugin_offset + (aplen - 8);
+            if (ap_name_start < len) {
+                size_t ap_end = ap_name_start;
+                while (ap_end < len && data[ap_end] != '\0') ++ap_end;
+                if (ap_end > ap_name_start) {
+                    info.auth_plugin = std::string(data + ap_name_start, ap_end - ap_name_start);
+                }
+            }
+        }
+    }
+
+    return info;
+}
+
 } // namespace scanner

@@ -39,6 +39,7 @@ struct ScannerConfig {
     bool enable_redis = false;
     bool enable_rtsp = false;
     bool enable_sip = false;
+    bool enable_mysql = false;
     bool scan_all_ports = false;
 
     // DNS 配置

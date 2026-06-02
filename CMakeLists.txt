@@ -191,6 +191,7 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/redis_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/rtsp_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/sip_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/mysql_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/protocol_parsers.cpp
 )
 
@@ -299,6 +300,7 @@ if(Catch2_FOUND)
         tests/unit/smtp_parser_test.cpp
         tests/unit/ssh_ftp_parser_test.cpp
         tests/unit/pop3_imap_http_parser_test.cpp
+        tests/unit/mysql_parser_test.cpp
     )
     target_link_libraries(unit_test PRIVATE scanner_core Catch2::Catch2 Catch2::Catch2WithMain)
     target_compile_features(unit_test PRIVATE cxx_std_20)

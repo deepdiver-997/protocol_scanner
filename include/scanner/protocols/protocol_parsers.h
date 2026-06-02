@@ -102,4 +102,20 @@ struct HttpResponseInfo {
 
 HttpResponseInfo parse_http_response(const std::string& response);
 
+// =====================
+// MySQL
+// =====================
+
+struct MysqlHandshakeInfo {
+    std::string version_string;
+    std::string version;
+    uint8_t protocol_version = 0;
+    std::string auth_plugin;
+    uint32_t capability_flags = 0;
+};
+
+// 输入: MySQL 握手包原始字节（binary）
+// 解析协议版本(1B) → 服务器版本(null-terminated) → 能力标志
+MysqlHandshakeInfo parse_mysql_handshake(const char* data, size_t len);
+
 } // namespace scanner
