@@ -38,6 +38,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode, const std:
     error_msg_.clear();
     dns_result_ = DnsResult{};
     // 【优化】移除 state_ 原子操作（不再维护状态机）
+    generation_.fetch_add(1, std::memory_order_release);
     tasks_total_.store(0, std::memory_order_relaxed);
     tasks_completed_.store(0, std::memory_order_relaxed);
     // 【优化】移除 idle_ 原子操作
@@ -245,7 +246,8 @@ bool ScanSession::start_one_probe(
     }
 
     // 提交任务到扫描线程池，实际 IO 在 exec 所属 io_context
-    scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout]() {
+    auto gen = generation_.load(std::memory_order_acquire);
+    scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout, gen]() {
         // 优先使用域名作为 target，如果没有域名则使用 IP
         const std::string& target = target_.domain.empty() ? target_.get_ip_string() : target_.domain;
         
@@ -255,7 +257,11 @@ bool ScanSession::start_one_probe(
             port,
             timeout,
             exec,
-            [this, proto_name = proto_ptr->name()](ProtocolResult&& r) {
+            [this, proto_name = proto_ptr->name(), gen](ProtocolResult&& r) {
+                // 检查 generation：如果 session 已被 reset，这个 callback 过期了
+                if (generation_.load(std::memory_order_acquire) != gen) {
+                    return;
+                }
                 if (!r.accessible && !r.error.empty()) {
                      // 临时增加调试日志，采样打印错误
                      static int err_log_count = 0;
@@ -347,14 +353,19 @@ int ScanSession::start_all_pending_probes(
         }
 
         // 提交任务到扫描线程池
-        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout, target_name, ip]() {
+        auto gen = generation_.load(std::memory_order_acquire);
+        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective_timeout, target_name, ip, gen]() {
             proto_ptr->async_probe(
                 target_name,
                 ip,
                 port,
                 timeout,
                 exec,
-                [this, proto_name = proto_ptr->name()](ProtocolResult&& r) {
+                [this, proto_name = proto_ptr->name(), gen](ProtocolResult&& r) {
+                    // 检查 generation：如果 session 已被 reset，这个 callback 过期了
+                    if (generation_.load(std::memory_order_acquire) != gen) {
+                        return;
+                    }
                     LOG_CORE_WARN("[session] Probe callback invoked for {} {} (accessible={})", target_.get_ip_string(), proto_name, r.accessible);
                     if (!r.accessible && !r.error.empty()) {
                         static int err_log_count = 0;

@@ -148,6 +148,7 @@ public:
 
     // 设置是否仅收集成功结果
     void set_only_success(bool only_success) { only_success_ = only_success; }
+    uint64_t current_generation() const { return generation_.load(std::memory_order_acquire); }
 
 private:
     ScanTarget target_;
@@ -173,6 +174,7 @@ private:
     // 任务计数（保持原子以支持并发访问）
     std::atomic<std::size_t> tasks_total_{0};
     std::atomic<std::size_t> tasks_completed_{0};
+    std::atomic<uint64_t> generation_{0};      // 每 reset 递增，用于 callback 防过期
 
     // 过滤策略
     bool only_success_{false};
