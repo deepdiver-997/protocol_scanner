@@ -1,4 +1,5 @@
 #include "scanner/protocols/imap_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
@@ -221,38 +222,18 @@ void ImapProtocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    std::istringstream iss(response);
-    std::string line;
-    while (std::getline(iss, line)) {
-        if (line.find("* OK") == 0 || line.find("* PREAUTH") == 0) {
-            attrs.banner = line;
-            continue;
-        }
-        if (line.find("* CAPABILITY") == 0) {
-            // Parse capabilities
-            if (line.find("IMAP4rev1") != std::string::npos) {
-                attrs.imap.imap4rev1 = true;
-            }
-            if (line.find("STARTTLS") != std::string::npos) {
-                attrs.imap.starttls = true;
-            }
-            if (line.find("AUTH=PLAIN") != std::string::npos) {
-                attrs.imap.auth_plain = true;
-            }
-            if (line.find("AUTH=LOGIN") != std::string::npos) {
-                attrs.imap.auth_login = true;
-            }
-            if (line.find("IDLE") != std::string::npos) {
-                attrs.imap.idle = true;
-            }
-            if (line.find("UNSELECT") != std::string::npos) {
-                attrs.imap.unselect = true;
-            }
-            if (line.find("UIDPLUS") != std::string::npos) {
-                attrs.imap.uidplus = true;
-            }
-        }
-    }
+    auto info = parse_imap_capability(response);
+    attrs.banner = info.banner;
+    attrs.imap.imap4rev1 = info.imap4rev1;
+    attrs.imap.starttls = info.starttls;
+    attrs.imap.auth_plain = info.auth_plain;
+    attrs.imap.auth_login = info.auth_login;
+    attrs.imap.idle = info.idle;
+    attrs.imap.quota = info.quota;
+    attrs.imap.acl = info.acl;
+    attrs.imap.unselect = info.unselect;
+    attrs.imap.uidplus = info.uidplus;
+    attrs.imap.capabilities = info.capabilities;
 }
 
 } // namespace scanner

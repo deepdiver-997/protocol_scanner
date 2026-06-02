@@ -1,4 +1,5 @@
 #include "scanner/protocols/http_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
@@ -185,31 +186,11 @@ void HttpProtocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    std::istringstream oss(response);
-    std::string line;
-    std::string status_line;
-
-    while (std::getline(oss, line)) {
-        if (line.back() == '\r') line.pop_back();
-        if (line.empty()) {
-            break;
-        }
-
-        if (status_line.empty() && starts_with_ignore_case(line, "HTTP/")) {
-            status_line = line;
-            auto space = line.find(' ');
-            if (space != std::string::npos) {
-                auto code_str = line.substr(space + 1, 3);
-                try {
-                    attrs.http.status_code = std::stoi(code_str);
-                } catch (...) {}
-            }
-        } else if (starts_with_ignore_case(line, "Server: ")) {
-            attrs.http.server = line.substr(8);
-        } else if (starts_with_ignore_case(line, "Content-Type: ")) {
-            attrs.http.content_type = line.substr(14);
-        }
-    }
+    auto info = parse_http_response(response);
+    attrs.banner = info.status_line;
+    attrs.http.status_code = info.status_code;
+    attrs.http.server = info.server;
+    attrs.http.content_type = info.content_type;
 }
 
 } // namespace scanner

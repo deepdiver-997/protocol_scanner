@@ -1,0 +1,123 @@
+#include "scanner/protocols/mysql_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
+#include "scanner/common/logger.h"
+#include "scanner/common/buffer_pool.h"
+#include <boost/asio/read.hpp>
+
+namespace scanner {
+
+namespace asio = boost::asio;
+using tcp = asio::ip::tcp;
+using steady_timer = asio::steady_timer;
+
+struct MysqlProbeContext {
+    ProtocolResult result;
+    tcp::socket socket;
+    steady_timer timer;
+    BufferPool::BufferHandle buffer;
+    size_t bytes_read{0};
+    Timeout timeout;
+    std::function<void(ProtocolResult&&)> on_complete;
+    std::chrono::steady_clock::time_point start_time;
+    bool completed{false};
+
+    MysqlProbeContext(boost::asio::any_io_executor exec, Timeout t,
+                      std::function<void(ProtocolResult&&)> cb)
+        : socket(std::move(exec)), timer(socket.get_executor()),
+          buffer(get_global_buffer_pool().acquire()),
+          timeout(t), on_complete(std::move(cb)) {}
+
+    void finish_success() {
+        result.accessible = true;
+        auto end = std::chrono::steady_clock::now();
+        result.attrs.response_time_ms =
+            std::chrono::duration_cast<std::chrono::milliseconds>(end - start_time).count();
+        complete();
+    }
+
+    void finish_error(const std::string& msg) {
+        result.error = msg;
+        complete();
+    }
+
+    void complete() {
+        if (completed) return;
+        completed = true;
+        boost::system::error_code ec;
+        (void)timer.cancel();
+        socket.close(ec);
+        if (on_complete) on_complete(std::move(result));
+    }
+};
+
+void MysqlProtocol::async_probe(
+    const std::string& target,
+    const std::string& ip,
+    Port port,
+    Timeout timeout,
+    boost::asio::any_io_executor exec,
+    std::function<void(ProtocolResult&&)> on_complete
+) {
+    auto ctx = std::make_shared<MysqlProbeContext>(std::move(exec), timeout, std::move(on_complete));
+    ctx->result.protocol = name();
+    ctx->result.host = target;
+    ctx->result.port = port;
+    ctx->start_time = std::chrono::steady_clock::now();
+
+    ctx->socket.open(tcp::v4());
+    asio::socket_base::reuse_address reuse_opt(true);
+    asio::socket_base::receive_buffer_size recv_buf(8 * 1024);
+    asio::socket_base::send_buffer_size send_buf(4 * 1024);
+    asio::ip::tcp::no_delay no_delay_opt(true);
+    boost::system::error_code set_ec;
+    ctx->socket.set_option(reuse_opt, set_ec);
+    ctx->socket.set_option(recv_buf, set_ec);
+    ctx->socket.set_option(send_buf, set_ec);
+    ctx->socket.set_option(no_delay_opt, set_ec);
+
+    ctx->timer.expires_after(timeout);
+    ctx->timer.async_wait([ctx](const boost::system::error_code& ec) {
+        if (!ec) ctx->finish_error("MySQL probe timed out");
+    });
+
+    boost::system::error_code ec;
+    auto address = asio::ip::make_address(ip, ec);
+    if (ec) { ctx->finish_error("Invalid address"); return; }
+
+    tcp::endpoint endpoint(address, port);
+    ctx->socket.async_connect(endpoint, [ctx](const boost::system::error_code& ec) {
+        if (ec) { ctx->finish_error("Connect failed: " + ec.message()); return; }
+
+        // MySQL server sends handshake immediately after connect
+        ctx->socket.async_read_some(
+            asio::buffer(ctx->buffer->data(), ctx->buffer->size()),
+            [ctx](const boost::system::error_code& ec, std::size_t n) {
+                if (ec) { ctx->finish_error("Read failed: " + ec.message()); return; }
+
+                ctx->bytes_read = n;
+                if (n >= ctx->buffer->size()) ctx->result.attrs.banner_truncated = true;
+
+                // Parse MySQL handshake to extract version
+                auto info = parse_mysql_handshake(ctx->buffer->data(), n);
+                ctx->result.attrs.banner = info.version_string;
+                ctx->result.attrs.vendor = "MySQL " + info.version;
+                // Store version info
+                ctx->result.attrs.mysql.protocol_version = info.protocol_version;
+                ctx->result.attrs.mysql.version = info.version;
+                ctx->result.attrs.mysql.auth_plugin = info.auth_plugin;
+                ctx->result.attrs.mysql.capability_flags = info.capability_flags;
+
+                ctx->finish_success();
+            });
+    });
+}
+
+void MysqlProtocol::parse_capabilities(const std::string& response, ProtocolAttributes& attrs) {
+    auto info = parse_mysql_handshake(response.data(), response.size());
+    attrs.mysql.protocol_version = info.protocol_version;
+    attrs.mysql.version = info.version;
+    attrs.mysql.auth_plugin = info.auth_plugin;
+    attrs.mysql.capability_flags = info.capability_flags;
+}
+
+} // namespace scanner

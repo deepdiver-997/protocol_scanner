@@ -161,14 +161,14 @@ set(SCANNER_MAIN_SRC
 )
 
 set(SCANNER_CORE_SRCS
-    ${CMAKE_SOURCE_DIR}/src/scanner/dns_resolver.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/dns/dns_resolver.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/io_thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/session.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/crash_inspector.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/progress_manager.cpp
-    ${CMAKE_SOURCE_DIR}/src/scanner/utils.cpp
-    ${CMAKE_SOURCE_DIR}/src/scanner/scanner.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/core/utils.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/core/scanner.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/vendor/vendor_detector.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/output/result_handler.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/distributed_queue.cpp
@@ -189,6 +189,10 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/telnet_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/ssh_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/redis_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/rtsp_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/sip_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/mysql_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/protocol_parsers.cpp
 )
 
 set(ALL_CORE_SRCS ${SCANNER_CORE_SRCS} ${PROTOCOL_SRCS})
@@ -287,17 +291,34 @@ configure_file(
 )
 
 # =====================
+# 单元测试
+# =====================
+
+find_package(Catch2 QUIET)
+if(Catch2_FOUND)
+    add_executable(unit_test
+        tests/unit/smtp_parser_test.cpp
+        tests/unit/ssh_ftp_parser_test.cpp
+        tests/unit/pop3_imap_http_parser_test.cpp
+        tests/unit/mysql_parser_test.cpp
+    )
+    target_link_libraries(unit_test PRIVATE scanner_core Catch2::Catch2 Catch2::Catch2WithMain)
+    target_compile_features(unit_test PRIVATE cxx_std_20)
+    message(STATUS "  Catch2: ${Catch2_VERSION} (unit tests enabled)")
+else()
+    message(STATUS "  Catch2: not found (unit tests disabled, brew install catch2)")
+endif()
+
+# 快速 probe 测试（手动运行）
+add_executable(probe_test _unit_test.cpp)
+target_link_libraries(probe_test PRIVATE scanner_core)
+target_compile_features(probe_test PRIVATE cxx_std_20)
+
+# =====================
 # 依赖汇总
 # =====================
 message(STATUS "Dependency summary:")
 message(STATUS "  Boost: ${Boost_VERSION}")
 message(STATUS "  nlohmann_json: ${nlohmann_json_VERSION}")
 message(STATUS "  fmt: ${fmt_VERSION}")
-
-# =====================
-# 单元测试（可独立验证 probe 是否工作）
-# =====================
-add_executable(probe_test _unit_test.cpp)
-target_link_libraries(probe_test PRIVATE scanner_core)
-target_compile_features(probe_test PRIVATE cxx_std_20)
 message(STATUS "  c-ares target: ${CARES_TARGET}")

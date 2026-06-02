@@ -1,4 +1,5 @@
 #include "scanner/protocols/pop3_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
@@ -160,30 +161,15 @@ void Pop3Protocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    std::istringstream iss(response);
-    std::string line;
-    while (std::getline(iss, line)) {
-        if (line.find("+OK") == 0) {
-            attrs.banner = line;
-            continue;
-        }
-        // Parse POP3 capabilities if needed
-        if (line.find("USER") != std::string::npos) {
-            attrs.pop3.user = true;
-        }
-        if (line.find("TOP") != std::string::npos) {
-            attrs.pop3.top = true;
-        }
-        if (line.find("PIPELINING") != std::string::npos) {
-            attrs.pop3.pipelining = true;
-        }
-        if (line.find("UIDL") != std::string::npos) {
-            attrs.pop3.uidl = true;
-        }
-        if (line.find("STLS") != std::string::npos) {
-            attrs.pop3.stls = true;
-        }
-    }
+    auto info = parse_pop3_greeting(response);
+    attrs.banner = info.banner;
+    attrs.pop3.stls = info.stls;
+    attrs.pop3.sasl = info.sasl;
+    attrs.pop3.user = info.user;
+    attrs.pop3.top = info.top;
+    attrs.pop3.pipelining = info.pipelining;
+    attrs.pop3.uidl = info.uidl;
+    attrs.pop3.capabilities = info.capabilities;
 }
 
 } // namespace scanner

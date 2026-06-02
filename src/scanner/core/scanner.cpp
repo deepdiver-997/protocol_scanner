@@ -10,6 +10,10 @@
 #include "scanner/protocols/ftp_protocol.h"
 #include "scanner/protocols/telnet_protocol.h"
 #include "scanner/protocols/ssh_protocol.h"
+#include "scanner/protocols/redis_protocol.h"
+#include "scanner/protocols/rtsp_protocol.h"
+#include "scanner/protocols/sip_protocol.h"
+#include "scanner/protocols/mysql_protocol.h"
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -111,6 +115,10 @@ void Scanner::init_protocols() {
     if (config_.enable_ftp) protocols_.push_back(std::make_unique<FtpProtocol>());
     if (config_.enable_telnet) protocols_.push_back(std::make_unique<TelnetProtocol>());
     if (config_.enable_ssh) protocols_.push_back(std::make_unique<SshProtocol>());
+    if (config_.enable_redis) protocols_.push_back(std::make_unique<RedisProtocol>());
+    if (config_.enable_rtsp) protocols_.push_back(std::make_unique<RtspProtocol>());
+    if (config_.enable_sip) protocols_.push_back(std::make_unique<SipProtocol>());
+    if (config_.enable_mysql) protocols_.push_back(std::make_unique<MysqlProtocol>());
 }
 
 bool Scanner::is_protocol_enabled(const std::string& name) const {
@@ -121,6 +129,10 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
     if (name == "FTP") return config_.enable_ftp;
     if (name == "TELNET") return config_.enable_telnet;
     if (name == "SSH") return config_.enable_ssh;
+    if (name == "REDIS") return config_.enable_redis;
+    if (name == "RTSP") return config_.enable_rtsp;
+    if (name == "SIP") return config_.enable_sip;
+    if (name == "MYSQL") return config_.enable_mysql;
     return false;
 }
 

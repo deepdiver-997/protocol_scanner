@@ -1,4 +1,5 @@
 #include "scanner/protocols/smtp_protocol.h"
+#include "scanner/protocols/protocol_parsers.h"
 #include "scanner/common/logger.h"
 #include "scanner/common/buffer_pool.h"
 #include <boost/asio/write.hpp>
@@ -220,17 +221,21 @@ void SmtpProtocol::parse_capabilities(
     const std::string& response,
     ProtocolAttributes& attrs
 ) {
-    std::istringstream iss(response);
-    std::string line;
-    while (std::getline(iss, line)) {
-        if (line.find("220") == 0) {
-            attrs.banner = line;
-            continue;
-        }
-        if (line.find("250-") == 0 || line.find("250 ") == 0) {
-            parse_ehlo_line(line, attrs);
-        }
+    // Extract banner (first 220 line)
+    auto crlf = response.find("\r\n");
+    if (crlf != std::string::npos) {
+        attrs.banner = response.substr(0, crlf);
     }
+    // Use standalone parser
+    auto info = parse_smtp_banner(response);
+    attrs.smtp.pipelining = info.pipelining;
+    attrs.smtp.starttls = info.starttls;
+    attrs.smtp.size_supported = info.size_supported;
+    attrs.smtp.size_limit = info.size_limit;
+    attrs.smtp.utf8 = info.utf8;
+    attrs.smtp._8bitmime = info._8bitmime;
+    attrs.smtp.dsn = info.dsn;
+    attrs.smtp.auth_methods = info.auth_methods;
 }
 
 void SmtpProtocol::parse_ehlo_line(
