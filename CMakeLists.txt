@@ -177,6 +177,7 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/task_codec.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/kafka_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/ingestor.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/openssh_probes.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
 )
 
@@ -243,6 +244,20 @@ endif()
 # nlohmann/json
 if(JSON_TARGET)
     target_link_libraries(scanner_core PUBLIC ${JSON_TARGET})
+endif()
+
+# libssh2 (optional, for SSH deep probes)
+find_package(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+    pkg_check_modules(LIBSSH2 QUIET IMPORTED_TARGET libssh2)
+    if(LIBSSH2_FOUND)
+        target_link_libraries(scanner_core PUBLIC PkgConfig::LIBSSH2)
+        target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_DEEP_PROBE=1)
+    else()
+        target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_DEEP_PROBE=0)
+    endif()
+else()
+    target_compile_definitions(scanner_core PUBLIC SCANNER_ENABLE_DEEP_PROBE=0)
 endif()
 
 # librdkafka (optional)
@@ -313,6 +328,10 @@ endif()
 add_executable(probe_test _unit_test.cpp)
 target_link_libraries(probe_test PRIVATE scanner_core)
 target_compile_features(probe_test PRIVATE cxx_std_20)
+
+add_executable(deep_probe src/scanner/deep_probe_main.cpp)
+target_link_libraries(deep_probe PRIVATE scanner_core)
+target_compile_features(deep_probe PRIVATE cxx_std_20)
 
 # =====================
 # 依赖汇总
