@@ -20,4 +20,20 @@ std::string probe_openssh_max_startups(const std::string& ip, uint16_t port, int
 // 返回: "login_grace_time=120s"
 std::string probe_openssh_login_grace_time(const std::string& ip, uint16_t port, int max_wait_sec = 180);
 
+// =====================
+// vsftpd Probes
+// =====================
+
+// 探测 max_clients: 最大并发客户端数
+// 返回: "max_clients=50"
+std::string probe_vsftpd_max_clients(const std::string& ip, uint16_t port, int max_conn = 200);
+
+// =====================
+// telnetd Probes
+// =====================
+
+// 探测登录失败延迟: 输入错误密码后服务器延迟多久返回
+// 返回: "login_delay_ms=3000"
+std::string probe_telnetd_login_delay(const std::string& ip, uint16_t port, int max_wait_ms = 10000);
+
 } // namespace scanner::deep_probe

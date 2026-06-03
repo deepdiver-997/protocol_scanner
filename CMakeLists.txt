@@ -178,6 +178,7 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/kafka_transport.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/ingestor.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/openssh_probes.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/vsftpd_telnetd_probes.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
 )
 

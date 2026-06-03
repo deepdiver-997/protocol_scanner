@@ -20,8 +20,14 @@ int main(int argc, char* argv[]) {
         result = scanner::deep_probe::probe_openssh_max_startups(ip, port);
     } else if (type == "login_grace_time") {
         result = scanner::deep_probe::probe_openssh_login_grace_time(ip, port, 180);
+    } else if (type == "max_clients") {
+        result = scanner::deep_probe::probe_vsftpd_max_clients(ip, port);
+    } else if (type == "login_delay") {
+        result = scanner::deep_probe::probe_telnetd_login_delay(ip, port);
     } else {
-        std::cerr << "Unknown probe: " << type << std::endl;
+        std::cerr << "Unknown probe: " << type << "\n"
+                  << "Available: max_auth_tries, max_startups, login_grace_time,\n"
+                  << "           max_clients (vsftpd), login_delay (telnetd)\n";
         return 1;
     }
 
