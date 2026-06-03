@@ -1,0 +1,15 @@
+protocol: FTP
+normalize:
+  domain:
+    enabled: true
+    known_suffixes:
+      - gnu.org
+      - ftp.gnu.org
+    unknown_replacement: "[Host]"
+  timestamp:
+    enabled: false
+  random_id:
+    enabled: true
+    patterns:
+      - "\\d{8,}"
+    replacement: "[SessionID]"
