@@ -1,0 +1,28 @@
+protocol: SMTP
+normalize:
+  domain:
+    enabled: true
+    known_suffixes:
+      - google.com
+      - outlook.com
+      - qq.com
+      - 163.com
+      - yahoo.com
+      - icloud.com
+      - protonmail.com
+      - barracuda.com
+      - pphosted.com
+      - mimecast.com
+    unknown_replacement: "[DomainName]"
+  timestamp:
+    enabled: true
+    patterns:
+      - "\\w{3}, \\d{2} \\w{3} \\d{4} \\d{2}:\\d{2}:\\d{2} [+-]\\d{4}"
+      - "\\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2}:\\d{2}"
+    replacement: "[DateTime]"
+  random_id:
+    enabled: true
+    patterns:
+      - "[a-f0-9]{8,}"
+      - "[A-Za-z0-9+/]{20,}"
+    replacement: "[RandomID]"

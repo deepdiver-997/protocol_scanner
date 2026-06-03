@@ -14,6 +14,7 @@
 #include "scanner/protocols/rtsp_protocol.h"
 #include "scanner/protocols/sip_protocol.h"
 #include "scanner/protocols/mysql_protocol.h"
+#include <nlohmann/json.hpp>
 #include <algorithm>
 #include <thread>
 #include <chrono>
@@ -41,11 +42,16 @@ std::string output_extension_for(const std::string& fmt, bool stream_mode) {
     if (fmt == "required_format") return "txt";
     if (fmt == "report") return "txt";
     if (fmt == "text") return "txt";
+    if (fmt == "fingerprint") return "jsonl";
     return "txt";
 }
 
 bool needs_text_header(const std::string& fmt) {
     return fmt == "text" || fmt == "report" || fmt == "required_format";
+}
+
+bool needs_per_probe_output(const std::string& fmt) {
+    return fmt == "fingerprint";
 }
 
 } // namespace
@@ -462,6 +468,22 @@ void Scanner::result_handler_thread() {
                 const std::string one = result_handler_->report_to_string(r);
                 if (!one.empty()) {
                     report_ofs_ << one << '\n';
+                }
+            }
+        } else if (fmt == "fingerprint") {
+            // 每协议每行，扁平 JSONL，给 Python pipeline 用
+            static std::atomic<uint64_t> fp_seq{0};
+            for (const auto& r : reports) {
+                for (const auto& pr : r.protocols) {
+                    nlohmann::json j;
+                    j["seq"] = fp_seq.fetch_add(1, std::memory_order_relaxed);
+                    j["ip"] = r.target.get_ip_string();
+                    j["port"] = pr.port;
+                    j["protocol"] = pr.protocol;
+                    j["banner"] = pr.attrs.banner;
+                    j["time"] = std::chrono::system_clock::to_time_t(
+                        std::chrono::system_clock::now());
+                    report_ofs_ << j.dump() << '\n';
                 }
             }
         } else {

@@ -1,0 +1,11 @@
+protocol: SSH
+normalize:
+  domain:
+    enabled: false
+  timestamp:
+    enabled: false
+  random_id:
+    enabled: true
+    patterns:
+      - "_[a-f0-9]{7,}"
+    replacement: ""
