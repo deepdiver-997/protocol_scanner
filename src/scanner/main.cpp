@@ -205,7 +205,7 @@ ScannerConfig load_config(const string& config_file) {
             if (j.contains("scanner")) {
                 auto s = j["scanner"];
                 if (s.contains("io_thread_count")) config.io_thread_count = s["io_thread_count"];
-                if (s.contains("cpu_thread_count")) config.cpu_thread_count = s["cpu_thread_count"];
+
                 if (s.contains("thread_count")) config.thread_count = s["thread_count"];
                 if (s.contains("batch_size")) config.batch_size = s["batch_size"];
                 if (s.contains("result_batch_size")) config.result_batch_size = s["result_batch_size"];
@@ -345,7 +345,7 @@ void print_usage(const char* program_name, const po::options_description& option
     cout << "  # Scan with default config" << endl;
     cout << "  " << program_name << " --domains domains.txt --scan" << endl;
     cout << "  # Specify IO and CPU thread counts separately" << endl;
-    cout << "  " << program_name << " --domains domains.txt --scan --io-threads 12 --cpu-threads 2" << endl;
+    cout << "  " << program_name << " --domains domains.txt --scan --io-threads 12" << endl;
     cout << "  # Legacy: single thread count" << endl;
     cout << "  " << program_name << " --domains domains.txt --threads 8" << endl;
     cout << endl;
@@ -377,7 +377,7 @@ int main(int argc, char* argv[]) {
             ("output,o", po::value<string>(), "Output directory (default: ./result)")
             ("threads,t", po::value<int>()->default_value(4), "Number of threads (deprecated, use --io-threads)")
             ("io-threads", po::value<int>(), "IO thread pool size (network I/O)")
-            ("cpu-threads", po::value<int>(), "CPU thread pool size (protocol processing)")
+
             ("config,c", po::value<string>(), "Configuration file")
             ("protocols,p", po::value<string>(),
              "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH)")
@@ -496,32 +496,18 @@ int main(int argc, char* argv[]) {
             config.only_success = true;
         }
         
-        bool has_io_threads = vm.count("io-threads");
-        bool has_cpu_threads = vm.count("cpu-threads");
-
-        if (has_io_threads) {
+        if (vm.count("io-threads")) {
             config.io_thread_count = vm["io-threads"].as<int>();
-        }
-        if (has_cpu_threads) {
-            config.cpu_thread_count = vm["cpu-threads"].as<int>();
         }
 
         if (vm.count("disable-crash-inspection")) {
             config.enable_crash_inspection = false;
         }
 
-        // 如果显式传递 --threads 且没有分别指定 io/cpu 线程，使用向后兼容逻辑
-        // 需要检查 --threads 的原始值是否为默认值
-        const auto& threads_arg = vm["threads"];
-        bool is_threads_explicit = !threads_arg.defaulted();
-
-        if (is_threads_explicit && !has_io_threads && !has_cpu_threads) {
-            // 向后兼容：--threads 同时设置 io 和 cpu 线程数
-            int threads = vm["threads"].as<int>();
-            config.thread_count = threads;
-            config.io_thread_count = threads;
-            config.cpu_thread_count = std::max(1, threads / 4);
-            LOG_CORE_DEBUG("Using legacy --threads={} setting both IO and CPU pools", threads);
+        // 向后兼容：--threads 只设置 IO 线程数
+        if (!vm["threads"].defaulted() && !vm.count("io-threads")) {
+            config.io_thread_count = vm["threads"].as<int>();
+            LOG_CORE_DEBUG("Using --threads={} for IO thread pool", config.io_thread_count);
         }
 
         if (vm["timeout"].defaulted() == false) {
@@ -625,14 +611,13 @@ int main(int argc, char* argv[]) {
         
         LOG_CORE_INFO("Input file: {}", domains_file);
 
-        // 显示最终配置（在命令行参数覆盖后）
-        if (config.io_thread_count > 0 && config.cpu_thread_count > 0) {
-            LOG_CORE_DEBUG("Thread pools: IO={}, CPU={}", config.io_thread_count, config.cpu_thread_count);
-        } else {
-            LOG_CORE_DEBUG("Thread count: {} (legacy mode)", config.thread_count);
-        }
+        LOG_CORE_DEBUG("IO thread pool: {} threads", config.io_thread_count > 0 ? config.io_thread_count : config.thread_count);
 
         if (vm.count("scan")) {
+            std::cout << "[config] probe_timeout=" << config.probe_timeout.count() << "ms"
+                      << " dns_timeout=" << config.dns_timeout.count() << "ms"
+                      << " io_threads=" << config.io_thread_count
+                      << std::endl;
             // 若存在上次运行留下的进度文件，先记录一次启动诊断再恢复。
             run_startup_inspection(domains_file, config);
 

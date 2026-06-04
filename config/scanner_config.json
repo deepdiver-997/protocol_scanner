@@ -1,7 +1,6 @@
 {
   "scanner": {
     "io_thread_count": 4,
-    "cpu_thread_count": 1,
     "thread_count": 8,
     "batch_size": 2000,
     "result_batch_size": 200,

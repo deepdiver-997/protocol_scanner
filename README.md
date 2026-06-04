@@ -9,7 +9,7 @@
 ## ✨ Key Features
 
 - **🔍 Multi-Protocol Support**: SMTP, POP3, IMAP, HTTP, FTP, Telnet, SSH, Redis
-- **🚀 Ultra-High Performance**: Dual-layer thread architecture (scan pool + I/O pool)
+- **🚀 Ultra-High Performance**: Asynchronous I/O thread pool with load balancing
 - **📊 Large-Scale Scanning**: Streaming CIDR parsing, no memory preload
 - **🧩 Modular Design**: Easy to add new protocols via inheritance
 - **🏢 Vendor Detection**: Auto-identifies Gmail, Outlook, QQ, 163, etc.
@@ -236,7 +236,7 @@ protocol-scanner/
 │   ├── common/
 │   │   ├── logger.h              # Compile-time conditional logging (spdlog)
 │   │   ├── buffer_pool.h         # Fixed-size 1KB buffer pool with RAII handles
-│   │   ├── thread_pool.h         # CPU-bound task thread pool
+│   │   ├── thread_pool.h         # Thread-safe BlockingQueue (for results)
 │   │   └── io_thread_pool.h      # I/O thread pool (Boost.Asio, load-balanced)
 │   │
 │   ├── core/

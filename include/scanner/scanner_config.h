@@ -14,7 +14,6 @@ namespace scanner {
 struct ScannerConfig {
     // Scanner 配置
     int io_thread_count = 4;         // IO 线程数（网络 I/O，建议设置为 CPU 核心数 × 1.5）
-    int cpu_thread_count = 2;        // CPU 线程数（协议解析等轻量任务，建议 2-4）
     int thread_count = 4;            // 废弃：保留向后兼容
     int batch_size = 100;            // 扫描任务配额：每轮循环最多启动的任务数
     int result_batch_size = 50;      // 结果写入批量：每次写入磁盘的最大结果数（0 表示不限制）
