@@ -25,7 +25,7 @@ int main() {
     config.targets_max_size = 100;
     config.result_queue_max_size = 50;
     config.io_thread_count = 2;
-    config.cpu_thread_count = 1;
+    // cpu_thread_count removed (single IoThreadPool only)
     config.logging_level = "DEBUG";
     config.logging_console_enabled = true;
 

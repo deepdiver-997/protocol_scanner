@@ -49,6 +49,8 @@ std::unique_ptr<IDnsResolver> DnsResolverFactory::create(
     DnsResolverFactory::ResolverType type
 ) {
     switch (type) {
+        case DnsResolverFactory::ResolverType::NULL_RESOLVER:
+            return std::make_unique<NullResolver>();
         case DnsResolverFactory::ResolverType::DIG:
             return std::make_unique<DigResolver>();
         case DnsResolverFactory::ResolverType::C_ARES:
