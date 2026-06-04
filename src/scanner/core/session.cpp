@@ -126,7 +126,6 @@ bool ScanSession::should_probe(const IProtocol& proto, Port port) const {
 
 int ScanSession::start_all_pending_probes(
     const std::vector<std::unique_ptr<IProtocol>>& protocols,
-    ThreadPool& scan_pool,
     const boost::asio::any_io_executor& exec,
     Timeout timeout,
     int quota
@@ -170,34 +169,31 @@ int ScanSession::start_all_pending_probes(
         Timeout proto_default = proto_ptr->default_timeout();
         if (proto_default > effective) effective = proto_default;
 
-        scan_pool.submit([this, proto_ptr, port = chosen_port, exec, timeout = effective,
-                          target_name, ip, proto_name = chosen_proto, grq, gen]() {
-            proto_ptr->async_probe(
-                target_name, ip, port, timeout, exec,
-                [this, proto_name, grq, gen](ProtocolResult&& r) {
-                    if (generation_.load(std::memory_order_acquire) != gen) return;
+        proto_ptr->async_probe(
+            target_name, ip, chosen_port, effective, exec,
+            [this, proto_name = chosen_proto, grq, gen](ProtocolResult&& r) {
+                if (generation_.load(std::memory_order_acquire) != gen) return;
 
+                {
+                    std::lock_guard<std::mutex> lock(results_mutex_);
+                    results_.push_back(std::move(r));
+                }
+
+                auto comp = tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1;
+                auto total = tasks_total_.load(std::memory_order_acquire);
+
+                if (comp >= total) {
+                    ScanReport rep;
+                    rep.target = target_;
+                    rep.total_time = std::chrono::milliseconds(0);
                     {
                         std::lock_guard<std::mutex> lock(results_mutex_);
-                        results_.push_back(std::move(r));
+                        rep.protocols = std::move(results_);
                     }
-
-                    auto comp = tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1;
-                    auto total = tasks_total_.load(std::memory_order_acquire);
-
-                    if (comp >= total) {
-                        ScanReport rep;
-                        rep.target = target_;
-                        rep.total_time = std::chrono::milliseconds(0);
-                        {
-                            std::lock_guard<std::mutex> lock(results_mutex_);
-                            rep.protocols = std::move(results_);
-                        }
-                        grq->push(std::move(rep));
-                    }
+                    grq->push(std::move(rep));
                 }
-            );
-        });
+            }
+        );
         ++launched;
     }
     return launched;
