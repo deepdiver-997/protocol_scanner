@@ -6,6 +6,10 @@
 **Memory Efficiency:** 40-60MB peak for scanning 1.35B+ IP addresses  
 **Startup Time:** <1 second (even for billion-item CIDR blocks)
 
+> **IPv6 支持**: 当前使用 IPv4 单栈。IPv6 在手机热点等特定网络环境下可能更快，
+> 但综合考虑 IPv4 兼容性、代码复杂度和大多数部署场景，暂不加入 Happy Eyeballs 双栈连接。
+> 可通过编译开关 `-DENABLE_IPV6=ON` 在 socket 创建处切换为 `tcp::v6()`。
+
 ## ✨ Key Features
 
 - **🔍 Multi-Protocol Support**: SMTP, POP3, IMAP, HTTP, FTP, Telnet, SSH, Redis

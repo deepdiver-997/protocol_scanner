@@ -76,9 +76,10 @@ public:
 class DnsResolverFactory {
 public:
     enum class ResolverType {
-        DIG,       // 使用 dig 命令
-        C_ARES,    // 使用 c-ares 库
-        ASIO       // 使用 Boost.Asio
+        NULL_RESOLVER, // 无解析，直接返回空（输入纯 IP 时）
+        DIG,           // 使用 dig 命令
+        C_ARES,        // 使用 c-ares 库
+        ASIO           // 使用 Boost.Asio
     };
 
     static std::unique_ptr<IDnsResolver> create(
@@ -185,6 +186,20 @@ private:
 
     // 取消当前通道上的所有未完成查询（用于错误/超时收尾）
     void cancel_all_queries();
+};
+
+// =====================
+// Null 解析器（纯 IP 输入时使用，无外部依赖）
+// =====================
+
+class NullResolver : public IDnsResolver {
+public:
+    NullResolver() = default;
+    ~NullResolver() override = default;
+
+    bool query_a_record(const std::string&, std::string&, Timeout) override { return false; }
+    bool query_mx_records(const std::string&, std::vector<DnsRecord>&, Timeout) override { return false; }
+    DnsResult resolve(const std::string&, Timeout) override { return DnsResult{}; }
 };
 
 } // namespace scanner

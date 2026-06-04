@@ -64,7 +64,9 @@ Scanner::Scanner(const ScannerConfig& config)
     
     DnsResolverFactory::ResolverType rtype = DnsResolverFactory::ResolverType::C_ARES;
     const auto& rname = config_.dns_resolver_type;
-    if (rname == "dig") {
+    if (rname == "null" || rname == "none") {
+        rtype = DnsResolverFactory::ResolverType::NULL_RESOLVER;
+    } else if (rname == "dig") {
         rtype = DnsResolverFactory::ResolverType::DIG;
     } else if (rname == "cares" || rname == "c-ares") {
         rtype = DnsResolverFactory::ResolverType::C_ARES;
