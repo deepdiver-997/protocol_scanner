@@ -112,7 +112,6 @@ private:
     // 记录解析后的厂商模式文件路径，便于结果线程保存
     std::string vendor_pattern_path_;
 
-    std::shared_ptr<ThreadPool> scan_pool_;
     std::shared_ptr<IoThreadPool> io_pool_;
 
     // 已完成报告

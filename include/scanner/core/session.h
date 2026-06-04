@@ -63,7 +63,6 @@ public:
     // ====== 启动探测 ======
     int start_all_pending_probes(
         const std::vector<std::unique_ptr<IProtocol>>& protocols,
-        ThreadPool& scan_pool,
         const boost::asio::any_io_executor& exec,
         Timeout timeout,
         int quota = INT_MAX

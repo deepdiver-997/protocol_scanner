@@ -50,9 +50,6 @@ bool needs_text_header(const std::string& fmt) {
     return fmt == "text" || fmt == "report" || fmt == "required_format";
 }
 
-bool needs_per_probe_output(const std::string& fmt) {
-    return fmt == "fingerprint";
-}
 
 } // namespace
 
@@ -60,12 +57,10 @@ Scanner::Scanner(const ScannerConfig& config)
     : config_(config) {
     // 优先使用新的分离配置，向后兼容旧的 thread_count
     int io_threads = config.io_thread_count > 0 ? config.io_thread_count : config.thread_count;
-    int cpu_threads = config.cpu_thread_count > 0 ? config.cpu_thread_count : std::max(1, config.thread_count / 4);
 
-    scan_pool_ = std::make_shared<ThreadPool>(std::max(1, cpu_threads));
     io_pool_ = std::make_shared<IoThreadPool>(std::max(1, io_threads));
 
-    LOG_CORE_DEBUG("Thread pools initialized: IO={} CPU={}", io_threads, cpu_threads);
+    LOG_CORE_DEBUG("IO thread pool initialized: {} threads", io_threads);
     
     DnsResolverFactory::ResolverType rtype = DnsResolverFactory::ResolverType::C_ARES;
     const auto& rname = config_.dns_resolver_type;
@@ -83,7 +78,6 @@ Scanner::~Scanner() {
     if (input_thread_.joinable()) input_thread_.join();
     if (result_thread_.joinable()) result_thread_.join();
     if (scan_thread_.joinable()) scan_thread_.join();
-    if (scan_pool_) scan_pool_->shutdown();
     if (io_pool_) io_pool_->shutdown();
 }
 
@@ -817,14 +811,14 @@ void Scanner::scan_loop() {
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                                : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_);
-                    int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                    int started = s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
                     quota -= started;
                 } else {
                     s->set_expected_tasks(0);
                     active_sessions--;
                 }
             } else if (quota > 0) {
-                int started = s->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+                int started = s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
                 quota -= started;
             }
             if (quota == 0) break;
@@ -846,7 +840,7 @@ void Scanner::scan_loop() {
                 config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                        : ScanSession::ProbeMode::ProtocolDefaults,
                 protocols_, result_queue_);
-            int started = sess->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, quota);
+            int started = sess->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
             quota -= started;
             sessions_.push_back(std::move(sess));
             active_sessions++;
@@ -934,7 +928,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_
         );
-        session->start_all_pending_probes(protocols_, *scan_pool_, io_exec, config_.probe_timeout, 10);
+        session->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 10);
         // Wait...
         for (int i = 0; i < 100 && !session->ready_to_release(); i++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));
