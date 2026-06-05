@@ -120,37 +120,45 @@ else()
     endif()
 endif()
 
-# c-ares DNS
+# c-ares DNS (optional)
+option(USE_CARES "Use c-ares for asynchronous DNS resolution" ON)
 set(CARES_TARGET "")
-find_package(c-ares CONFIG QUIET)
-if(TARGET c-ares::cares)
-    set(CARES_TARGET c-ares::cares)
-endif()
-if(NOT CARES_TARGET AND PKG_CONFIG_FOUND)
-    pkg_check_modules(CARES QUIET IMPORTED_TARGET libcares)
-    if(CARES_FOUND)
-        set(CARES_TARGET PkgConfig::CARES)
+if(USE_CARES)
+    find_package(c-ares CONFIG QUIET)
+    if(TARGET c-ares::cares)
+        set(CARES_TARGET c-ares::cares)
     endif()
-endif()
-if(NOT CARES_TARGET)
-    find_library(CARES_LIBRARY NAMES cares libcares
-        PATHS /opt/homebrew/opt/c-ares/lib /usr/local/opt/c-ares/lib
-    )
-    find_path(CARES_INCLUDE_DIR ares.h
-        PATHS /opt/homebrew/opt/c-ares/include /usr/local/opt/c-ares/include
-    )
-    if(CARES_LIBRARY)
-        add_library(cares_fallback INTERFACE)
-        target_link_libraries(cares_fallback INTERFACE ${CARES_LIBRARY})
-        if(CARES_INCLUDE_DIR)
-            target_include_directories(cares_fallback INTERFACE ${CARES_INCLUDE_DIR})
+    if(NOT CARES_TARGET AND PKG_CONFIG_FOUND)
+        pkg_check_modules(CARES QUIET IMPORTED_TARGET libcares)
+        if(CARES_FOUND)
+            set(CARES_TARGET PkgConfig::CARES)
         endif()
-        set(CARES_TARGET cares_fallback)
+    endif()
+    if(NOT CARES_TARGET)
+        find_library(CARES_LIBRARY NAMES cares libcares
+            PATHS /opt/homebrew/opt/c-ares/lib /usr/local/opt/c-ares/lib
+        )
+        find_path(CARES_INCLUDE_DIR ares.h
+            PATHS /opt/homebrew/opt/c-ares/include /usr/local/opt/c-ares/include
+        )
+        if(CARES_LIBRARY)
+            add_library(cares_fallback INTERFACE)
+            target_link_libraries(cares_fallback INTERFACE ${CARES_LIBRARY})
+            if(CARES_INCLUDE_DIR)
+                target_include_directories(cares_fallback INTERFACE ${CARES_INCLUDE_DIR})
+            endif()
+            set(CARES_TARGET cares_fallback)
+        endif()
+    endif()
+    if(NOT CARES_TARGET)
+        message(WARNING "c-ares not found, building without DNS resolution support. "
+            "Install c-ares for DNS features: ${_mac_hint}; ${_deb_hint}")
+        set(USE_CARES OFF)
     endif()
 endif()
-if(NOT CARES_TARGET)
-    set(_cares_help "c-ares not found. ${_mac_hint}; ${_deb_hint}")
-    message(FATAL_ERROR "${_cares_help}")
+if(NOT USE_CARES)
+    message(STATUS "Building without c-ares (CAresResolver disabled, fallback to dig)")
+    add_compile_definitions(SCANNER_NO_CARES)
 endif()
 
 # =====================
@@ -162,6 +170,7 @@ set(SCANNER_MAIN_SRC
 
 set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/dns/dns_resolver.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/dns/dig_resolver.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/common/io_thread_pool.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/session.cpp
@@ -181,6 +190,11 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/vsftpd_telnetd_probes.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
 )
+
+# c-ares resolver (only when available)
+if(USE_CARES)
+    list(APPEND SCANNER_CORE_SRCS ${CMAKE_SOURCE_DIR}/src/scanner/dns/cares_resolver.cpp)
+endif()
 
 set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/smtp_protocol.cpp
@@ -278,8 +292,10 @@ if(NOT ENABLE_LOGGING)
     target_compile_definitions(scanner_core PUBLIC SCANNER_DISABLE_LOGGING)
 endif()
 
-# c-ares linking
-target_link_libraries(scanner_core PUBLIC ${CARES_TARGET})
+# c-ares linking (only if available)
+if(CARES_TARGET)
+    target_link_libraries(scanner_core PUBLIC ${CARES_TARGET})
+endif()
 
 target_link_libraries(scanner PRIVATE scanner_core)
 target_link_libraries(scanner_distributed PRIVATE scanner_core)

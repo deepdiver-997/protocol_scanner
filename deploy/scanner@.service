@@ -1,0 +1,25 @@
+[Unit]
+Description=Protocol Scanner - %I scan
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/scanner
+Environment=SCANNER_CONFIG=/opt/scanner/config/scanner_config.json
+Environment=SCANNER_INPUT=/opt/scanner/input/targets.txt
+ExecStart=/opt/scanner/bin/run_scan.sh %i
+
+# 安全与资源限制
+Restart=on-failure
+RestartSec=30
+TimeoutStopSec=60
+LimitNOFILE=65535
+
+# 自动清理旧日志
+StandardOutput=append:/opt/scanner/logs/scanner-%i.log
+StandardError=append:/opt/scanner/logs/scanner-%i-error.log
+
+[Install]
+WantedBy=multi-user.target

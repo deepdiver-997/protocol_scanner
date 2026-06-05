@@ -4,14 +4,11 @@
 #include <vector>
 #include <memory>
 #include <chrono>
-#include <atomic>
-#include <ares.h>
 
 #include "../protocols/protocol_base.h"
 
 namespace scanner {
 
-// Forward declaration
 using Timeout = std::chrono::milliseconds;
 
 // =====================
@@ -87,119 +84,9 @@ public:
     );
 };
 
-// =====================
-// Dig 命令解析器实现 默认不使用减少外部调用开销
-// =====================
-
-class DigResolver : public IDnsResolver {
-public:
-    DigResolver() = default;
-    virtual ~DigResolver() = default;
-
-    bool query_a_record(
-        const std::string& domain,
-        std::string& ip,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-    bool query_mx_records(
-        const std::string& domain,
-        std::vector<DnsRecord>& records,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-    DnsResult resolve(
-        const std::string& domain,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-private:
-    // 调用 dig 命令并解析输出
-    bool execute_dig(
-        const std::string& domain,
-        const std::string& query_type,
-        std::vector<std::string>& lines
-    );
-
-    // 解析 A 记录输出
-    bool parse_a_record(
-        const std::vector<std::string>& lines,
-        std::string& ip
-    );
-
-    // 解析 MX 记录输出
-    bool parse_mx_records(
-        const std::vector<std::string>& lines,
-        std::vector<DnsRecord>& records
-    );
-
-    // 检查是否超时
-    bool is_timeout_line(const std::string& line) const;
-};
-
 } // namespace scanner
 
-// =====================
-// c-ares 解析器实现
-// =====================
-
-namespace scanner {
-
-class CAresResolver : public IDnsResolver {
-public:
-    CAresResolver();
-    virtual ~CAresResolver();
-
-    bool query_a_record(
-        const std::string& domain,
-        std::string& ip,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-    bool query_mx_records(
-        const std::string& domain,
-        std::vector<DnsRecord>& records,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-    DnsResult resolve(
-        const std::string& domain,
-        Timeout timeout = Timeout(5000)
-    ) override;
-
-private:
-    ares_channel channel_ = nullptr;
-    std::atomic<int> pending_requests_{0};      // 追踪待处理请求数
-    std::mutex channel_mutex_;                  // 保护 channel_ 访问
-    std::atomic<bool> shutting_down_{false};    // 标记是否正在关闭
-    
-    bool init_channel();
-    void destroy_channel();
-    bool run_event_loop(Timeout timeout, std::atomic<bool>& done);
-    
-    // 安全获取 channel，检查是否在关闭
-    ares_channel get_channel();
-    
-    // 增加和减少待处理请求计数
-    void increment_pending();
-    void decrement_pending();
-
-    // 取消当前通道上的所有未完成查询（用于错误/超时收尾）
-    void cancel_all_queries();
-};
-
-// =====================
-// Null 解析器（纯 IP 输入时使用，无外部依赖）
-// =====================
-
-class NullResolver : public IDnsResolver {
-public:
-    NullResolver() = default;
-    ~NullResolver() override = default;
-
-    bool query_a_record(const std::string&, std::string&, Timeout) override { return false; }
-    bool query_mx_records(const std::string&, std::vector<DnsRecord>&, Timeout) override { return false; }
-    DnsResult resolve(const std::string&, Timeout) override { return DnsResult{}; }
-};
-
-} // namespace scanner
+// 子类头文件
+#include "null_resolver.h"
+#include "dig_resolver.h"
+#include "cares_resolver.h"

@@ -1,0 +1,431 @@
+#include "scanner/dns/cares_resolver.h"
+#include "scanner/common/logger.h"
+
+#include <cstring>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <sys/time.h>
+#include <vector>
+#include <poll.h>
+#include <chrono>
+#include <thread>
+
+#ifndef HAVE_ARES_PROCESS_FDS
+// Compatibility macro for older c-ares versions if needed,
+// though we usually target newer ones now.
+#endif
+
+namespace scanner {
+
+CAresResolver::CAresResolver() {
+    init_channel();
+}
+
+CAresResolver::~CAresResolver() {
+    // 标记正在关闭
+    {
+        std::lock_guard<std::mutex> lock(channel_mutex_);
+        shutting_down_ = true;
+    }
+
+    // 等待所有待处理请求完成（最多等待1秒）
+    auto start = std::chrono::steady_clock::now();
+    while (pending_requests_.load() > 0 &&
+           std::chrono::steady_clock::now() - start < std::chrono::seconds(1)) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+
+    // 销毁通道
+    destroy_channel();
+}
+
+bool CAresResolver::init_channel() {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    ares_options opts{};
+    int optmask = 0; // use system defaults
+    int status = ares_init_options(&channel_, &opts, optmask);
+    if (status != ARES_SUCCESS) {
+        LOG_DNS_ERROR("c-ares init failed: {}", ares_strerror(status));
+        channel_ = nullptr;
+        return false;
+    }
+    return true;
+}
+
+void CAresResolver::destroy_channel() {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    if (channel_) {
+        ares_destroy(channel_);
+        channel_ = nullptr;
+    }
+}
+
+ares_channel CAresResolver::get_channel() {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    if (shutting_down_ || !channel_) {
+        return nullptr;
+    }
+    return channel_;
+}
+
+void CAresResolver::increment_pending() {
+    pending_requests_.fetch_add(1, std::memory_order_relaxed);
+}
+
+void CAresResolver::decrement_pending() {
+    pending_requests_.fetch_sub(1, std::memory_order_release);
+}
+
+void CAresResolver::cancel_all_queries() {
+    std::lock_guard<std::mutex> lock(channel_mutex_);
+    if (channel_) {
+        ares_cancel(channel_);
+    }
+}
+
+// 辅助宏
+#ifndef POLLIN
+#define POLLIN  0x001
+#endif
+#ifndef POLLOUT
+#define POLLOUT 0x004
+#endif
+
+bool CAresResolver::run_event_loop(Timeout timeout, std::atomic<bool>& done) {
+    ares_channel channel = get_channel();
+    if (!channel) return false;
+
+    auto start = std::chrono::steady_clock::now();
+    while (!done.load()) {
+        // 使用 ares_getsock 获取 socket 列表，避免使用 select (FD_SETSIZE 限制)
+        ares_socket_t socks[ARES_GETSOCK_MAXNUM];
+        int bitmask = ares_getsock(channel, socks, ARES_GETSOCK_MAXNUM);
+
+        if (bitmask == 0) {
+            // 没有待处理的 socket，可能任务已完成
+             if (done.load()) break;
+             // 如果还没 done 但也没有 socket，稍微休眠一下防止死循环
+             std::this_thread::sleep_for(std::chrono::milliseconds(1));
+             continue;
+        }
+
+        // 构建 pollfd 数组
+        std::vector<struct pollfd> pfd_vec;
+        pfd_vec.reserve(ARES_GETSOCK_MAXNUM);
+
+        for (int i = 0; i < ARES_GETSOCK_MAXNUM; ++i) {
+            if (ARES_GETSOCK_READABLE(bitmask, i) || ARES_GETSOCK_WRITABLE(bitmask, i)) {
+                struct pollfd pfd;
+                pfd.fd = socks[i];
+                pfd.events = 0;
+                if (ARES_GETSOCK_READABLE(bitmask, i)) pfd.events |= POLLIN;
+                if (ARES_GETSOCK_WRITABLE(bitmask, i)) pfd.events |= POLLOUT;
+                pfd.revents = 0;
+                pfd_vec.push_back(pfd);
+            }
+        }
+
+        if (pfd_vec.empty()) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            continue;
+        }
+
+        // 计算超时
+        int timeout_ms = 1000; // 默认 poll 超时
+        timeval tv_timeout;
+        if (ares_timeout(channel, nullptr, &tv_timeout) != nullptr) {
+             timeout_ms = (tv_timeout.tv_sec * 1000) + (tv_timeout.tv_usec / 1000);
+        }
+
+        // 结合用户设定的总超时
+        if (timeout.count() > 0) {
+            auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start);
+            auto remaining = (elapsed >= timeout) ? 0 : (timeout - elapsed).count();
+            if (remaining == 0) {
+                LOG_DNS_WARN("c-ares timeout reached in loop");
+                return false;
+            }
+            if (remaining < timeout_ms) {
+                timeout_ms = static_cast<int>(remaining);
+            }
+        }
+
+        // 执行 poll
+        int poll_res = poll(pfd_vec.data(), pfd_vec.size(), timeout_ms);
+
+        if (poll_res < 0) {
+            if (errno == EINTR) continue;
+            LOG_DNS_ERROR("poll failed: {}", strerror(errno));
+            return false;
+        }
+
+        // 处理结果 (使用 ares_process_fd 替代 ares_process 以兼容 poll 结果)
+        for (const auto& pfd : pfd_vec) {
+            if (pfd.revents != 0) {
+                ares_process_fd(channel,
+                    (pfd.revents & POLLIN) ? pfd.fd : ARES_SOCKET_BAD,
+                    (pfd.revents & POLLOUT) ? pfd.fd : ARES_SOCKET_BAD);
+            }
+        }
+        // 对于超时的处理，ares_process_fd(..., ARES_SOCKET_BAD, ARES_SOCKET_BAD)
+        // 可以触发 c-ares 内部的超时回调，但 c-ares 通常建议我们在没有任何事件时
+        // 也要调用一次 process。这里我们在循环中如果 poll 返回 0 (超时)
+        // 可以调用一次处理超时。
+        if (poll_res == 0) {
+            ares_process_fd(channel, ARES_SOCKET_BAD, ARES_SOCKET_BAD);
+        }
+
+        if (timeout.count() > 0) {
+             auto check_elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start);
+             if (check_elapsed >= timeout) return false;
+        }
+    }
+    return true;
+}
+
+bool CAresResolver::query_a_record(
+    const std::string& domain,
+    std::string& ip,
+    Timeout timeout
+) {
+    if (!IDnsResolver::is_valid_domain(domain)) {
+        LOG_DNS_WARN("Invalid domain: {}", domain);
+        return false;
+    }
+
+    ares_channel channel = get_channel();
+    if (!channel && !init_channel()) return false;
+
+    increment_pending();
+
+    auto done = std::make_shared<std::atomic<bool>>(false);
+
+    // 上下文：保存结果与完成标记
+    struct AddrinfoCtx {
+        std::shared_ptr<std::pair<std::string, int>> data;
+        std::shared_ptr<std::atomic<bool>> done;
+        CAresResolver* resolver;  // 用于访问解析器
+        bool callback_called = false;  // 跟踪回调是否被调用
+    };
+
+    // 使用 shared_ptr 确保回调时内存仍然有效
+    auto data = std::make_shared<std::pair<std::string, int>>();
+    data->second = ARES_EDESTRUCTION;
+
+    auto* ctx_ptr = new AddrinfoCtx{data, done, this, false};
+
+    // 再次获取 channel，确保在创建回调时有效
+    ares_channel query_channel = get_channel();
+    if (!query_channel) {
+        delete ctx_ptr;
+        decrement_pending();
+        return false;
+    }
+
+    // Replace deprecated ares_gethostbyname with ares_getaddrinfo
+    struct ares_addrinfo_hints hints = {};
+    hints.ai_family = AF_INET; // IPv4
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = ARES_AI_CANONNAME;
+
+    ares_getaddrinfo(query_channel, domain.c_str(), nullptr, &hints, [](void* arg, int status, int /*timeouts*/, struct ares_addrinfo* result) {
+        auto* ctx = static_cast<AddrinfoCtx*>(arg);
+        if (!ctx) return;
+
+        // 防御性检查：仅在回调中delete一次
+        if (ctx->callback_called) {
+            LOG_DNS_WARN("Duplicate callback invocation detected");
+            return;
+        }
+        ctx->callback_called = true;
+
+        if (!ctx->data) {
+            delete ctx;
+            return;
+        }
+
+        ctx->data->second = status;
+
+        // 检查解析器是否正在关闭
+        if (ctx->resolver && ctx->resolver->shutting_down_) {
+            status = ARES_ECANCELLED;
+        }
+
+        if (status == ARES_SUCCESS && result) {
+            // Traverse the list
+            for (auto* node = result->nodes; node != nullptr; node = node->ai_next) {
+                if (node->ai_family == AF_INET) {
+                    char buf[INET_ADDRSTRLEN];
+                    auto* addr = reinterpret_cast<struct sockaddr_in*>(node->ai_addr);
+                    const char* res = inet_ntop(AF_INET, &(addr->sin_addr), buf, sizeof(buf));
+                    if (res) {
+                        ctx->data->first = buf;
+                        break; // Just get the first one
+                    }
+                }
+            }
+            ares_freeaddrinfo(result);
+        }
+        // 标记完成
+        if (ctx->done) ctx->done->store(true);
+        if (ctx->resolver) ctx->resolver->decrement_pending();
+        delete ctx;
+    }, ctx_ptr);
+
+    bool loop_ok = run_event_loop(timeout, *done);
+
+    if (!loop_ok) {
+        LOG_DNS_WARN("A record query timeout or loop error for {}", domain);
+        cancel_all_queries();
+        // 注意：在cancel后，回调可能仍会被调用，所以不在这里delete ctx_ptr
+        return false;
+    }
+
+    if (data->second != ARES_SUCCESS) {
+        LOG_DNS_WARN("A record query failed for {}: {}", domain, ares_strerror(data->second));
+        return false;
+    }
+
+    ip = std::move(data->first);
+    return !ip.empty();
+}
+
+bool CAresResolver::query_mx_records(
+    const std::string& domain,
+    std::vector<DnsRecord>& records,
+    Timeout timeout
+) {
+    if (!IDnsResolver::is_valid_domain(domain)) {
+        LOG_DNS_WARN("Invalid domain: {}", domain);
+        return false;
+    }
+
+    ares_channel channel = get_channel();
+    if (!channel && !init_channel()) return false;
+
+    increment_pending();
+
+    records.clear();
+    auto done = std::make_shared<std::atomic<bool>>(false);
+
+    // 上下文：保存结果与完成标记（旧回调，返回原始报文）
+    struct MxCtx {
+        std::shared_ptr<std::pair<std::vector<DnsRecord>, int>> data;
+        std::shared_ptr<std::atomic<bool>> done;
+        CAresResolver* resolver;  // 用于访问解析器
+        bool callback_called = false;  // 防止重复delete
+    };
+
+    auto data = std::make_shared<std::pair<std::vector<DnsRecord>, int>>();
+    data->second = ARES_EDESTRUCTION;
+
+    auto* ctx_ptr = new MxCtx{data, done, this, false};
+
+    // 再次获取 channel，确保在创建回调时有效
+    ares_channel query_channel = get_channel();
+    if (!query_channel) {
+        delete ctx_ptr;
+        decrement_pending();
+        return false;
+    }
+
+    auto callback = [](void* arg, int status, int /*timeouts*/, unsigned char* abuf, int alen) {
+        auto* ctx = static_cast<MxCtx*>(arg);
+        if (!ctx) return;
+
+        // 防御性检查：仅在回调中delete一次
+        if (ctx->callback_called) {
+            LOG_DNS_WARN("Duplicate MX callback invocation detected");
+            return;
+        }
+        ctx->callback_called = true;
+
+        if (!ctx->data) {
+            delete ctx;
+            return;
+        }
+
+        ctx->data->second = status;
+
+        // 检查解析器是否正在关闭
+        if (ctx->resolver && ctx->resolver->shutting_down_) {
+            status = ARES_ECANCELLED;
+        }
+
+        if (status == ARES_SUCCESS) {
+            struct ares_mx_reply* mx_out = nullptr;
+            // 抑制旧解析 API 的弃用告警
+            #pragma clang diagnostic push
+            #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            int parse = ares_parse_mx_reply(abuf, alen, &mx_out);
+            #pragma clang diagnostic pop
+            if (parse == ARES_SUCCESS && mx_out) {
+                for (auto* p = mx_out; p != nullptr; p = p->next) {
+                    DnsRecord r;
+                    r.type = "MX";
+                    r.value = p->host ? p->host : "";
+                    r.ttl = 0;
+                    r.priority = p->priority;
+                    ctx->data->first.push_back(std::move(r));
+                }
+                ares_free_data(mx_out);
+            }
+        }
+        if (ctx->done) ctx->done->store(true);
+        if (ctx->resolver) ctx->resolver->decrement_pending();
+        delete ctx;
+    };
+
+    // 抑制 ares_search 的弃用告警，后续待迁移到 dnsrec 查询生成
+    #pragma clang diagnostic push
+    #pragma clang diagnostic ignored "-Wdeprecated-declarations"
+    ares_search(query_channel, domain.c_str(), ARES_CLASS_IN, ARES_REC_TYPE_MX, callback, ctx_ptr);
+    #pragma clang diagnostic pop
+
+    bool loop_ok = run_event_loop(timeout, *done);
+
+    if (!loop_ok) {
+        LOG_DNS_WARN("MX query timeout or loop error for {}", domain);
+        cancel_all_queries();
+        // 注意：在cancel后，回调可能仍会被调用，所以不在这里delete ctx_ptr
+        return false;
+    }
+
+    records = std::move(data->first);
+    return !records.empty();
+}
+
+DnsResult CAresResolver::resolve(
+    const std::string& domain,
+    Timeout timeout
+) {
+    DnsResult result;
+    result.domain = domain;
+    if (!IDnsResolver::is_valid_domain(domain)) {
+        result.error = "Invalid domain format";
+        result.success = false;
+        LOG_DNS_WARN("Invalid domain: {}", domain);
+        return result;
+    }
+
+    LOG_DNS_DEBUG("Resolving DNS (c-ares) for {}", domain);
+
+    if (!query_a_record(domain, result.ip, timeout)) {
+        result.error = "Failed to query A record";
+        result.success = false;
+        LOG_DNS_WARN("A record query failed for {}", domain);
+        return result;
+    }
+
+    (void)query_mx_records(domain, result.dns_records, timeout);
+
+    result.success = true;
+    LOG_DNS_DEBUG("DNS resolution completed for {}: IP={}, MX count={}",
+             domain, result.ip, result.dns_records.size());
+    return result;
+}
+
+} // namespace scanner
