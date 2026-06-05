@@ -1,0 +1,70 @@
+# Build artifacts
+build*
+*.o
+*.a
+*.so
+*.dylib
+*.out
+*.exe
+
+# Output files
+result/**
+targets/
+files/
+logs/**
+scan_results.*
+*.json.bak
+*.csv.bak
+*.db
+fingerprint-research/
+fingerprint_v1/
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+CTestTestfile.cmake
+_deps/
+cmake/
+
+# Temporary files
+temp/
+*.tmp
+*.swp
+*~
+*.bak
+*.docx
+docs/analysis
+docs/hidden
+docs/internal_others
+docs/program
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.sublime-*
+.clangd/
+compile_commands.json
+.gitignore
+config/**
+
+# Logs
+*.log
+*.log.*
+
+# Test outputs
+tests/output/*.json
+tests/output/*.txt
+tests/output/*.csv
+!tests/output/.gitkeep
+data/
+server-results/
+tests/output/**
+*ip*
+!sip_protocol.*
+get_country_ips.sh
+Launch*
