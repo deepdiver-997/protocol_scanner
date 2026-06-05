@@ -89,4 +89,6 @@ public:
 // 子类头文件
 #include "null_resolver.h"
 #include "dig_resolver.h"
+#ifndef SCANNER_NO_CARES
 #include "cares_resolver.h"
+#endif
