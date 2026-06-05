@@ -236,7 +236,7 @@ void Scanner::start(const std::string& source_path) {
     // 【优化】按实际需要动态扩展，初始预留少一点
     {
         std::lock_guard<SpinLock> lock(targets_lock_);
-        targets_.reserve(std::min(static_cast<size_t>(config_.batch_size * 2), size_t(2000)));
+        // deque 不需要 reserve，自动按块分配
     }
     
     // 启动三个线程
