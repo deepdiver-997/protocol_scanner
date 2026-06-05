@@ -1,5 +1,6 @@
 #pragma once
 
+#include "scanner/common/spin_lock.h"
 #include <vector>
 #include <queue>
 #include <mutex>
@@ -12,10 +13,7 @@
 
 namespace scanner {
 
-// 线程安全队列，用于线程池任务或结果传递
-// 使用阻塞等待，支持停止标记
-// 简单实现：满足本项目的生产者/消费者场景
-
+// 线程安全队列（自旋锁），用于线程池任务或结果传递
 template <typename T>
 class BlockingQueue {
 public:
@@ -23,64 +21,60 @@ public:
 
     void push(const T& value) {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<SpinLock> lock(mutex_);
             queue_.push(value);
         }
-        cv_.notify_one();
     }
 
     void push(T&& value) {
         {
-            std::lock_guard<std::mutex> lock(mutex_);
+            std::lock_guard<SpinLock> lock(mutex_);
             queue_.push(std::move(value));
         }
-        cv_.notify_one();
     }
 
-    // 弹出元素；在 stopped_ 时返回 false 表示结束
+    // 弹出元素（自旋等待）；stopped_ 时返回 false
     bool pop(T& out) {
-        std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait(lock, [this]() { return stopped_ || !queue_.empty(); });
-        if (stopped_ && queue_.empty()) {
-            return false;
+        while (true) {
+            {
+                std::lock_guard<SpinLock> lock(mutex_);
+                if (!queue_.empty()) {
+                    out = std::move(queue_.front());
+                    queue_.pop();
+                    return true;
+                }
+                if (stopped_) return false;
+            }
+            std::this_thread::sleep_for(std::chrono::microseconds(100));
         }
-        out = std::move(queue_.front());
-        queue_.pop();
-        return true;
     }
 
     // 非阻塞弹出
     bool try_pop(T& out) {
-        std::lock_guard<std::mutex> lock(mutex_);
-        if (queue_.empty()) {
-            return false;
-        }
+        std::lock_guard<SpinLock> lock(mutex_);
+        if (queue_.empty()) return false;
         out = std::move(queue_.front());
         queue_.pop();
         return true;
     }
 
     void stop() {
-        {
-            std::lock_guard<std::mutex> lock(mutex_);
-            stopped_ = true;
-        }
-        cv_.notify_all();
+        std::lock_guard<SpinLock> lock(mutex_);
+        stopped_ = true;
     }
 
     bool empty() const {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<SpinLock> lock(mutex_);
         return queue_.empty();
     }
 
     std::size_t size() const {
-        std::lock_guard<std::mutex> lock(mutex_);
+        std::lock_guard<SpinLock> lock(mutex_);
         return queue_.size();
     }
 
 private:
-    mutable std::mutex mutex_;
-    std::condition_variable cv_;
+    mutable SpinLock mutex_;
     std::queue<T> queue_;
     bool stopped_;
 };

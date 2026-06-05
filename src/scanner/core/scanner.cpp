@@ -235,7 +235,7 @@ void Scanner::start(const std::string& source_path) {
     // 预分配 targets_ 以减少重分配开销
     // 【优化】按实际需要动态扩展，初始预留少一点
     {
-        std::lock_guard<std::mutex> lock(targets_mutex_);
+        std::lock_guard<SpinLock> lock(targets_lock_);
         targets_.reserve(std::min(static_cast<size_t>(config_.batch_size * 2), size_t(2000)));
     }
     
@@ -253,18 +253,17 @@ void Scanner::start(const std::string& source_path) {
         bool got_enough_targets = false;
         
         while (!input_done_ && !stop_ && !got_enough_targets) {
-            std::unique_lock<std::mutex> lock(targets_mutex_);
-            auto ready = targets_cv_.wait_for(lock, std::chrono::seconds(3), [this]() {
-                return targets_.size() >= min_targets_before_start || input_done_ || stop_;
-            });
-            
-            if (ready && targets_.size() >= min_targets_before_start) {
-                LOG_CORE_DEBUG("Initial targets loaded ({}), starting scan threads", targets_.size());
-                got_enough_targets = true;
-                break;
+            {
+                std::lock_guard<SpinLock> lock(targets_lock_);
+                if (targets_.size() >= min_targets_before_start) {
+                    LOG_CORE_DEBUG("Initial targets loaded ({}), starting scan threads", targets_.size());
+                    got_enough_targets = true;
+                    break;
+                }
             }
-            
-            // 超时 3 秒后强制启动，不然输入线程会因为 targets 满而阻塞，导致死锁
+            // 自旋等待输入线程填充
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
             auto elapsed = std::chrono::steady_clock::now() - start_wait;
             if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 3) {
                 LOG_CORE_WARN("Timeout waiting for {} targets (have {}), force starting scan threads",
@@ -327,28 +326,22 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             }
 
             // 【关键优化】直接存储 uint32，延迟字符串化到真正需要时
-            std::unique_lock<std::mutex> lock(targets_mutex_);
-            
-            // 打印首次入队的诊断信息
-            if (loaded_count == 0) {
-                std::cout << "[input_thread] First target enqueued, queue_size=" << targets_.size() 
-                          << ", max=" << config_.targets_max_size << std::endl;
-            }
-            
-            // 【修复死锁】使用超时等待，避免永久阻塞导致文件解析提前终止
-            while (targets_.size() >= config_.targets_max_size && !stop_) {
-                // std::cout << "[input_thread] Queue full, waiting... size=" << targets_.size() << std::endl;
-                auto wait_result = targets_cv_.wait_for(lock, std::chrono::seconds(30), [this]() {
-                    return targets_.size() < config_.targets_max_size || stop_;
-                });
-                
-                if (!wait_result && !stop_) {
-                    // 超时但未收到停止信号 - 可能是 scan_loop 卡住了
-                    LOG_CORE_WARN("[input_thread] Waiting for queue space timeout (queue_size={}, max={}), retrying...",
-                                 targets_.size(), config_.targets_max_size);
-                    std::cout << "[input_thread] Queue wait timeout, retrying..." << std::endl;
-                    // 继续等待而不是返回false退出
+            {
+                std::lock_guard<SpinLock> lock(targets_lock_);
+                // 打印首次入队的诊断信息
+                if (loaded_count == 0) {
+                    std::cout << "[input_thread] First target enqueued, queue_size=" << targets_.size()
+                              << ", max=" << config_.targets_max_size << std::endl;
                 }
+            }
+
+            // 自旋等待直到有队列空间
+            while (true) {
+                {
+                    std::lock_guard<SpinLock> lock(targets_lock_);
+                    if (targets_.size() < config_.targets_max_size || stop_) break;
+                }
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
             }
 
             if (stop_) {
@@ -366,9 +359,10 @@ void Scanner::input_thread_func(const std::string& source_path, bool has_checkpo
             t.source_offset = source_offset;
             t.offset_ordinal = current_offset_ordinal;
 
-            targets_.push_back(std::move(t));
-            lock.unlock();
-            targets_cv_.notify_one();
+            {
+                std::lock_guard<SpinLock> lock(targets_lock_);
+                targets_.push_back(std::move(t));
+            }
             ++loaded_count;
             
             // 【诊断日志】每1000个IP打印一次进度
@@ -771,16 +765,12 @@ void Scanner::scan_loop() {
         return std::min(config_.batch_size, std::max(1, max_concurrent - active));
     };
 
-    auto fetch_targets = [this](std::vector<ScanTarget>& out, int max_count) -> int {
-        std::lock_guard<std::mutex> lock(targets_mutex_);
-        int count = 0;
-        while (count < max_count && !targets_.empty()) {
-            out.push_back(std::move(targets_.back()));
-            targets_.pop_back();
-            ++count;
-        }
-        if (count > 0) targets_cv_.notify_one();
-        return count;
+    auto fetch_one_target = [this](ScanTarget& out) -> bool {
+        std::lock_guard<SpinLock> lock(targets_lock_);
+        if (targets_.empty()) return false;
+        out = std::move(targets_.back());
+        targets_.pop_back();
+        return true;
     };
 
     while (true) {
@@ -792,10 +782,9 @@ void Scanner::scan_loop() {
         }
 
         int quota = estimate_quota();
-        std::vector<ScanTarget> batch;
-        fetch_targets(batch, std::min(quota, 50));
-
         int active_sessions = 0;
+        int max_sessions = config_.max_work_count > 0
+            ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
 
         // Step 1: iterate sessions, check completion + reuse
         for (auto& s : sessions_) {
@@ -803,12 +792,9 @@ void Scanner::scan_loop() {
             active_sessions++;
 
             if (s->ready_to_release()) {
-                LOG_CORE_DEBUG("[scan_loop] Session done for {}", s->target().get_ip_string());
-                // Result already pushed to global queue by probe callback
-                // Just reuse the session with a new target
-                if (!batch.empty()) {
-                    ScanTarget t = std::move(batch.back());
-                    batch.pop_back();
+                // Fetch ONE new target and reuse the session
+                ScanTarget t;
+                if (fetch_one_target(t)) {
                     s->reset(std::move(t),
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                                : ScanSession::ProbeMode::ProtocolDefaults,
@@ -826,16 +812,11 @@ void Scanner::scan_loop() {
             if (quota == 0) break;
         }
 
-        // Step 2: create new sessions for remaining batch targets
-        int max_sessions = config_.max_work_count > 0
-            ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
-
-        for (auto& t : batch) {
-            if (active_sessions >= max_sessions) {
-                std::lock_guard<std::mutex> lock(targets_mutex_);
-                targets_.push_back(std::move(t));
-                continue;
-            }
+        // Step 2: create new sessions, one target at a time
+        while (quota > 0 && active_sessions < max_sessions) {
+            ScanTarget t;
+            if (!fetch_one_target(t)) break;  // no more targets
+            active_sessions++;
             auto sess = std::make_unique<ScanSession>(t,
                 dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
                 config_.dns_timeout, config_.probe_timeout,
@@ -898,7 +879,6 @@ std::vector<ScanReport> Scanner::get_results(std::chrono::milliseconds timeout) 
 void Scanner::stop() {
     LOG_CORE_WARN("[Scanner::stop] Explicitly called, setting stop_=true");
     stop_ = true;
-    targets_cv_.notify_all();
     reports_cv_.notify_all();
 }
 
@@ -907,7 +887,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
     for (const auto& d : domains) {
         ScanTarget t;
         t.domain = d;
-        std::lock_guard<std::mutex> lock(targets_mutex_);
+        std::lock_guard<SpinLock> lock(targets_lock_);
         targets_.push_back(t);
     }
     input_done_ = true;
@@ -916,7 +896,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
     while (!targets_.empty()) {
         ScanTarget t;
         {
-            std::lock_guard<std::mutex> lock(targets_mutex_);
+            std::lock_guard<SpinLock> lock(targets_lock_);
             if (targets_.empty()) break;
             t = std::move(targets_.front());
             targets_.pop_back();

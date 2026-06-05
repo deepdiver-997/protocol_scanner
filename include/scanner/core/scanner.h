@@ -1,6 +1,7 @@
 #pragma once
 
 #include "scanner/protocols/protocol_base.h"
+#include "scanner/common/spin_lock.h"
 #include "scanner/common/thread_pool.h"
 #include "scanner/common/io_thread_pool.h"
 #include "scanner/core/session.h"
@@ -121,8 +122,7 @@ private:
     std::vector<ScanReport> completed_reports_;
 
     std::vector<ScanTarget> targets_;
-    std::mutex targets_mutex_;
-    std::condition_variable targets_cv_;
+    SpinLock targets_lock_;
     std::vector<std::unique_ptr<ScanSession>> sessions_;
 
     // 扫描状态
