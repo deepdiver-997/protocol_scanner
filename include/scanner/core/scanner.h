@@ -8,6 +8,7 @@
 #include "scanner/core/progress_manager.h"
 #include "scanner/vendor/vendor_detector.h"
 #include "scanner/output/result_handler.h"
+#include <deque>
 #include <vector>
 #include <memory>
 #include <functional>
@@ -121,7 +122,7 @@ private:
     std::condition_variable reports_cv_;
     std::vector<ScanReport> completed_reports_;
 
-    std::vector<ScanTarget> targets_;
+    std::deque<ScanTarget> targets_;  // FIFO: push_back + pop_front for in-order processing
     SpinLock targets_lock_;
     std::vector<std::unique_ptr<ScanSession>> sessions_;
 

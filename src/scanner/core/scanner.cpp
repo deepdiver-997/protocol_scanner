@@ -786,8 +786,8 @@ void Scanner::scan_loop() {
     auto fetch_one_target = [this](ScanTarget& out) -> bool {
         std::lock_guard<SpinLock> lock(targets_lock_);
         if (targets_.empty()) return false;
-        out = std::move(targets_.back());
-        targets_.pop_back();
+        out = std::move(targets_.front());
+        targets_.pop_front();
         return true;
     };
 
@@ -916,7 +916,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
             std::lock_guard<SpinLock> lock(targets_lock_);
             if (targets_.empty()) break;
             t = std::move(targets_.front());
-            targets_.pop_back();
+            targets_.pop_front();
         }
         auto resolver = dns_resolver_ 
             ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){})
