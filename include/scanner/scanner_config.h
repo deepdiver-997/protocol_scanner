@@ -26,6 +26,7 @@ struct ScannerConfig {
     std::string output_write_mode = "stream";
     bool only_success = false;
     size_t max_work_count = 0;
+    uint16_t metrics_port = 9080;
 
     // Protocol 配置
     bool enable_smtp = false;

@@ -10,7 +10,8 @@
     "only_success": false,
     "max_work_count": 20000,
     "targets_max_size": 0,
-    "result_queue_max_size": 0
+    "result_queue_max_size": 0,
+    "metrics_port": 9080
   },
   "protocols": {
     "_comment": "所有协议默认 disabled，通过 --protocols <NAME> 单选; 超时按协议特点设置",

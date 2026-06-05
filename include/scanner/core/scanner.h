@@ -3,6 +3,7 @@
 #include "scanner/protocols/protocol_base.h"
 #include "scanner/common/spin_lock.h"
 #include "scanner/common/thread_pool.h"
+#include "scanner/metrics/metrics_server.h"
 #include "scanner/common/io_thread_pool.h"
 #include "scanner/core/session.h"
 #include "scanner/core/progress_manager.h"
@@ -136,6 +137,13 @@ private:
     std::thread input_thread_;
     std::thread result_thread_;
     std::thread scan_thread_;
+
+    // metrics
+    MetricsServer metrics_server_;
+    std::unique_ptr<std::thread> metrics_thread_;
+    std::chrono::steady_clock::time_point metrics_start_time_;
+    uint64_t metrics_last_processed_{0};
+    std::atomic<size_t> pending_reports_count_{0};  // updated by result_handler
 
     // 统计信息
     std::atomic<size_t> total_targets_{0};

@@ -77,6 +77,8 @@ Scanner::Scanner(const ScannerConfig& config)
 
 Scanner::~Scanner() {
     stop();
+    metrics_server_.stop();
+    if (metrics_thread_ && metrics_thread_->joinable()) metrics_thread_->join();
     if (input_thread_.joinable()) input_thread_.join();
     if (result_thread_.joinable()) result_thread_.join();
     if (scan_thread_.joinable()) scan_thread_.join();
@@ -277,7 +279,54 @@ void Scanner::start(const std::string& source_path) {
     
     scan_thread_ = std::thread([this]() { scan_loop(); });
     result_thread_ = std::thread([this]() { result_handler_thread(); });
-    
+
+    // 启动 metrics HTTP 服务
+    metrics_start_time_ = std::chrono::steady_clock::now();
+    metrics_server_.start(config_.metrics_port);
+    metrics_thread_ = std::make_unique<std::thread>([this]() {
+        while (!stop_) {
+            std::this_thread::sleep_for(std::chrono::seconds(1));
+
+            MetricsSnapshot snap;
+            // 队列
+            snap.targets_queue_size = targets_.size();
+            snap.result_queue_size  = result_queue_.size();
+            snap.pending_reports_size = pending_reports_count_.load();
+
+            // 会话
+            snap.total_sessions = sessions_.size();
+            size_t active = 0;
+            for (const auto& s : sessions_) {
+                if (s && !s->idle()) ++active;
+            }
+            snap.active_sessions = active;
+
+            // 进度
+            snap.processed_count  = processed_count_.load();
+            snap.successful_count = successful_ips_.load();
+
+            // 速率 (每秒处理的增量)
+            uint64_t delta = snap.processed_count - metrics_last_processed_;
+            metrics_last_processed_ = snap.processed_count;
+            snap.targets_per_sec = static_cast<double>(delta);
+
+            // 运行时间
+            snap.uptime_sec = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::seconds>(
+                    std::chrono::steady_clock::now() - metrics_start_time_).count());
+
+            // 协议计数
+            {
+                std::lock_guard<std::mutex> lock(stats_mutex_);
+                for (const auto& [name, count] : protocol_success_counts_) {
+                    snap.protocol_success_counts.emplace_back(name, count);
+                }
+            }
+
+            metrics_server_.update_snapshot(snap);
+        }
+    });
+
     LOG_CORE_INFO("Scanner started with input source: {}", source_path);
 }
 
@@ -542,6 +591,7 @@ void Scanner::result_handler_thread() {
 
         successful_ips_.fetch_add(committed_successes, std::memory_order_relaxed);
         processed_count_.store(next_commit_seq - 1, std::memory_order_relaxed);
+        pending_reports_count_.store(pending_reports.size(), std::memory_order_relaxed);
 
         if (!stream_mode) {
             std::lock_guard<std::mutex> lock(reports_mutex_);
