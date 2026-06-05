@@ -71,7 +71,7 @@
     }
   },
   "dns": {
-    "resolver_type": "dig",
+    "resolver_type": "null",
     "max_mx_records": 16,
     "timeout_ms": 5000
   },
