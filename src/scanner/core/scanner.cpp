@@ -826,7 +826,6 @@ void Scanner::scan_loop() {
             int started = sess->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
             quota -= started;
             sessions_.push_back(std::move(sess));
-            active_sessions++;
         }
 
         // Step 3: check exit condition
