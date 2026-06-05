@@ -504,6 +504,15 @@ void Scanner::result_handler_thread() {
         }
 
         if (committed_batch.empty()) {
+            // 即使没有新结果可提交，也要刷新 checkpoint 时间戳
+            if (progress_manager_) {
+                auto now_time = std::chrono::system_clock::now();
+                auto t = std::chrono::system_clock::to_time_t(now_time);
+                std::ostringstream ss;
+                ss << std::put_time(std::gmtime(&t), "%Y-%m-%d %H:%M:%S");
+                checkpoint_info_.timestamp = ss.str();
+                progress_manager_->save_checkpoint(checkpoint_info_);
+            }
             return;
         }
 
@@ -603,7 +612,16 @@ void Scanner::result_handler_thread() {
             // 1. 收到停止信号
             // 2. 距离上次 flush 时间超过阈值
             // 3. 结果队列有数据
+            static auto last_status = std::chrono::steady_clock::now();
             if (!should_stop && elapsed < config_.result_flush_interval && result_queue_.empty()) {
+                auto since_status = std::chrono::duration_cast<std::chrono::seconds>(now - last_status).count();
+                if (since_status >= 30) {
+                    std::cout << "[result_thread] Waiting for results... idle="
+                              << std::chrono::duration_cast<std::chrono::seconds>(elapsed).count()
+                              << "s pending=" << pending_reports.size()
+                              << " queue=" << result_queue_.size() << std::endl;
+                    last_status = now;
+                }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
             }
