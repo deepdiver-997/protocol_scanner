@@ -152,11 +152,11 @@ void Scanner::start(const std::string& source_path) {
         // 根据线程数估算：每个IO线程可维持250-500个并发连接
         int io_threads = config_.io_thread_count > 0 ? config_.io_thread_count : config_.thread_count;
         config_.max_work_count = std::max(500, io_threads * 300);
-        // init_global_buffer_pool 需要这个值来初始化缓冲池大小
-        get_global_buffer_pool(config_.max_work_count);
-        LOG_CORE_DEBUG("Auto-configured max_work_count: {} (based on {} IO threads)", 
+        LOG_CORE_DEBUG("Auto-configured max_work_count: {} (based on {} IO threads)",
                      config_.max_work_count, io_threads);
     }
+    // 始终按 max_work_count 初始化缓冲池（避免显式配置时用默认 3000）
+    get_global_buffer_pool(std::max<size_t>(config_.max_work_count, 3000));
     
     if (config_.targets_max_size == 0) {
         // targets队列大小：至少是max_work_count的2倍，保证input线程不会被阻塞
@@ -820,7 +820,7 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
-    sessions_.reserve(std::min(config_.max_work_count, size_t(10000)));
+    sessions_.reserve(std::max(config_.max_work_count, size_t(1)));
     auto last_mem_log = std::chrono::steady_clock::now();
 
     auto estimate_quota = [this]() -> int {
@@ -828,7 +828,8 @@ void Scanner::scan_loop() {
         if (max_concurrent <= 0) max_concurrent = 1000;
         int active = 0;
         for (const auto& s : sessions_) {
-            if (s && !s->idle()) ++active;
+            // ready_to_release 的 session 即将被重用，不计入 active 避免 quota 过低
+            if (s && !s->idle() && !s->ready_to_release()) ++active;
         }
         return std::min(config_.batch_size, std::max(1, max_concurrent - active));
     };
