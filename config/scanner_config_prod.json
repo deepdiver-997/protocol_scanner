@@ -55,7 +55,7 @@
     "timeout_ms": 5000
   },
   "output": {
-    "format": ["json", "csv"],
+    "format": ["required_format"],
     "write_mode": "stream",
     "directory": "./output",
     "enable_json": true,
