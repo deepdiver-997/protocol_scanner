@@ -229,6 +229,10 @@ ScannerConfig load_config(const string& config_file) {
                 if (p.contains("FTP") && p["FTP"].contains("enabled")) config.enable_ftp = p["FTP"]["enabled"];
                 if (p.contains("TELNET") && p["TELNET"].contains("enabled")) config.enable_telnet = p["TELNET"]["enabled"];
                 if (p.contains("SSH") && p["SSH"].contains("enabled")) config.enable_ssh = p["SSH"]["enabled"];
+                if (p.contains("REDIS") && p["REDIS"].contains("enabled")) config.enable_redis = p["REDIS"]["enabled"];
+                if (p.contains("RTSP") && p["RTSP"].contains("enabled")) config.enable_rtsp = p["RTSP"]["enabled"];
+                if (p.contains("SIP") && p["SIP"].contains("enabled")) config.enable_sip = p["SIP"]["enabled"];
+                if (p.contains("MYSQL") && p["MYSQL"].contains("enabled")) config.enable_mysql = p["MYSQL"]["enabled"];
             }
 
             // ===== DNS 配置 =====
@@ -380,7 +384,7 @@ int main(int argc, char* argv[]) {
 
             ("config,c", po::value<string>(), "Configuration file")
             ("protocols,p", po::value<string>(),
-             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH)")
+             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH,REDIS,RTSP,SIP,MYSQL)")
             ("format,f", po::value<string>()->default_value("text"),
              "Output format (text,json,csv,report,required_format)")
             ("only-success", "Only output successful probes (hide failures)")
@@ -539,6 +543,10 @@ int main(int argc, char* argv[]) {
             config.enable_ftp = false;
             config.enable_telnet = false;
             config.enable_ssh = false;
+            config.enable_redis = false;
+            config.enable_rtsp = false;
+            config.enable_sip = false;
+            config.enable_mysql = false;
             for (auto& p : config.custom_protocols) {
                 if (p == "SMTP") config.enable_smtp = true;
                 else if (p == "POP3") config.enable_pop3 = true;
@@ -547,6 +555,10 @@ int main(int argc, char* argv[]) {
                 else if (p == "FTP") config.enable_ftp = true;
                 else if (p == "TELNET") config.enable_telnet = true;
                 else if (p == "SSH") config.enable_ssh = true;
+                else if (p == "REDIS") config.enable_redis = true;
+                else if (p == "RTSP") config.enable_rtsp = true;
+                else if (p == "SIP") config.enable_sip = true;
+                else if (p == "MYSQL") config.enable_mysql = true;
             }
         }
         if (vm.count("scan-all-ports")) {

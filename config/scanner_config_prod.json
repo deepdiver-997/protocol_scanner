@@ -1,18 +1,19 @@
 {
   "scanner": {
+    "_comment": "针对 6核 Xeon E5-2683 v4 / 8GB RAM 优化",
     "io_thread_count": 6,
-    "thread_count": 8,
     "batch_size": 5000,
     "result_batch_size": 500,
     "dns_timeout_ms": 2000,
     "probe_timeout_ms": 5000,
     "retry_count": 1,
     "only_success": true,
-    "max_work_count": 30000,
+    "max_work_count": 20000,
     "targets_max_size": 0,
     "result_queue_max_size": 0
   },
   "protocols": {
+    "_comment": "所有协议默认 disabled，通过 --protocols <NAME> 单选; 超时按协议特点设置",
     "SMTP": {
       "enabled": false,
       "ports": [25, 465, 587, 2525],
@@ -46,6 +47,26 @@
     "TELNET": {
       "enabled": false,
       "ports": [23],
+      "timeout_ms": 5000
+    },
+    "REDIS": {
+      "enabled": false,
+      "ports": [6379, 6380],
+      "timeout_ms": 3000
+    },
+    "RTSP": {
+      "enabled": false,
+      "ports": [554, 8554],
+      "timeout_ms": 3000
+    },
+    "SIP": {
+      "enabled": false,
+      "ports": [5060, 5061],
+      "timeout_ms": 3000
+    },
+    "MYSQL": {
+      "enabled": false,
+      "ports": [3306],
       "timeout_ms": 5000
     }
   },
