@@ -1,9 +1,9 @@
 #pragma once
 
+#include "scanner/common/spin_lock.h"
 #include <array>
 #include <vector>
 #include <memory>
-#include <mutex>
 #include <atomic>
 
 namespace scanner {
@@ -85,17 +85,17 @@ public:
 
     // 获取缓冲区（如果池为空，创建新的）
     BufferHandle acquire() {
-        std::lock_guard<std::mutex> lock(mutex_);
-        
-        if (!pool_.empty()) {
-            auto buffer = std::move(pool_.back());
-            pool_.pop_back();
-            available_count_.fetch_sub(1, std::memory_order_relaxed);
-            hit_count_.fetch_add(1, std::memory_order_relaxed);
-            return BufferHandle(std::move(buffer), this);
+        {
+            std::lock_guard<SpinLock> lock(mutex_);
+            if (!pool_.empty()) {
+                auto buffer = std::move(pool_.back());
+                pool_.pop_back();
+                available_count_.fetch_sub(1, std::memory_order_relaxed);
+                hit_count_.fetch_add(1, std::memory_order_relaxed);
+                return BufferHandle(std::move(buffer), this);
+            }
         }
-        
-        // 池为空，创建新缓冲区（会被统计为 miss）
+        // 池为空，创建新缓冲区
         miss_count_.fetch_add(1, std::memory_order_relaxed);
         return BufferHandle(std::make_unique<FixedBuffer>(), this);
     }
@@ -103,10 +103,7 @@ public:
     // 归还缓冲区
     void return_buffer(std::unique_ptr<FixedBuffer> buffer) {
         if (!buffer) return;
-        
-        std::lock_guard<std::mutex> lock(mutex_);
-        
-        // 如果池未满，归还；否则丢弃（让它自动析构）
+        std::lock_guard<SpinLock> lock(mutex_);
         if (pool_.size() < pool_size_) {
             pool_.push_back(std::move(buffer));
             available_count_.fetch_add(1, std::memory_order_relaxed);
@@ -143,7 +140,7 @@ public:
 private:
     const size_t pool_size_;
     std::vector<std::unique_ptr<FixedBuffer>> pool_;
-    std::mutex mutex_;
+    SpinLock mutex_;
     
     // 统计计数器（无锁）
     std::atomic<size_t> available_count_{0};
