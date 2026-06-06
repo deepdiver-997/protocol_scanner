@@ -2,8 +2,6 @@
 #include <fstream>
 #include <sstream>
 #include <iostream>
-#include <unistd.h>
-#include <sys/sysctl.h>
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
