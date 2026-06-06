@@ -3,6 +3,7 @@
 #include "scanner/common/logger.h"
 #include "scanner/common/io_thread_pool.h"
 #include "scanner/common/buffer_pool.h"
+#include "scanner/core/resource_guard.h"
 #include "scanner/protocols/smtp_protocol.h"
 #include "scanner/protocols/pop3_protocol.h"
 #include "scanner/protocols/imap_protocol.h"
@@ -149,12 +150,11 @@ void Scanner::start(const std::string& source_path) {
     // 【自动配置优化】配置值为0时，根据系统资源自动计算最优值
     // 此时配置文件和命令行参数都已合并完成
     if (config_.max_work_count == 0) {
-        // 根据线程数估算：每个IO线程可维持250-500个并发连接
-        int io_threads = config_.io_thread_count > 0 ? config_.io_thread_count : config_.thread_count;
-        config_.max_work_count = std::max(500, io_threads * 300);
-        LOG_CORE_DEBUG("Auto-configured max_work_count: {} (based on {} IO threads)",
-                     config_.max_work_count, io_threads);
+        config_.max_work_count = ResourceGuard::safe_max_work_count();
+        std::cout << "[init] auto max_work_count=" << config_.max_work_count << std::endl;
     }
+    // 启动前安全检测
+    ResourceGuard::check(config_.max_work_count, std::cout);
     // 始终按 max_work_count 初始化缓冲池（避免显式配置时用默认 3000）
     get_global_buffer_pool(std::max<size_t>(config_.max_work_count, 3000));
     

@@ -189,6 +189,7 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/openssh_probes.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/vsftpd_telnetd_probes.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/metrics/metrics_server.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/core/resource_guard.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
 )
 

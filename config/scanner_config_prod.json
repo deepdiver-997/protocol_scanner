@@ -8,7 +8,7 @@
     "probe_timeout_ms": 3000,
     "retry_count": 1,
     "only_success": true,
-    "max_work_count": 80000,
+    "max_work_count": 0,
     "targets_max_size": 0,
     "result_queue_max_size": 0,
     "metrics_port": 9080
