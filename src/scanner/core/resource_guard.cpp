@@ -1,4 +1,5 @@
 #include "scanner/core/resource_guard.h"
+#include <cstdint>
 #include <fstream>
 #include <sstream>
 #include <iostream>
