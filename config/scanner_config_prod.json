@@ -7,7 +7,7 @@
     "dns_timeout_ms": 2000,
     "probe_timeout_ms": 3000,
     "retry_count": 1,
-    "only_success": false,
+    "only_success": true,
     "max_work_count": 80000,
     "targets_max_size": 0,
     "result_queue_max_size": 0,
