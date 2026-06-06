@@ -820,19 +820,11 @@ void Scanner::result_handler_thread() {
 void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
     auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
-    sessions_.reserve(std::max(config_.max_work_count, size_t(1)));
     auto last_mem_log = std::chrono::steady_clock::now();
 
-    auto estimate_quota = [this]() -> int {
-        int max_concurrent = static_cast<int>(config_.max_work_count);
-        if (max_concurrent <= 0) max_concurrent = 1000;
-        int active = 0;
-        for (const auto& s : sessions_) {
-            // ready_to_release 的 session 即将被重用，不计入 active 避免 quota 过低
-            if (s && !s->idle() && !s->ready_to_release()) ++active;
-        }
-        return std::min(config_.batch_size, std::max(1, max_concurrent - active));
-    };
+    int max_sessions = config_.max_work_count > 0
+        ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
+    sessions_.reserve(max_sessions);
 
     auto fetch_one_target = [this](ScanTarget& out) -> bool {
         std::lock_guard<SpinLock> lock(targets_lock_);
@@ -842,6 +834,21 @@ void Scanner::scan_loop() {
         return true;
     };
 
+    // 一次性创建所有 session
+    for (int i = 0; i < max_sessions; ++i) {
+        ScanTarget t;
+        if (!fetch_one_target(t)) break;
+        auto sess = std::make_unique<ScanSession>(t,
+            dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+            config_.dns_timeout, config_.probe_timeout,
+            config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                   : ScanSession::ProbeMode::ProtocolDefaults,
+            protocols_, result_queue_);
+        sess->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 1);
+        sessions_.push_back(std::move(sess));
+    }
+    std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
+
     while (true) {
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
@@ -850,61 +857,34 @@ void Scanner::scan_loop() {
             last_mem_log = now;
         }
 
-        int quota = estimate_quota();
         int active_sessions = 0;
-        int max_sessions = config_.max_work_count > 0
-            ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
 
-        // Step 1: iterate sessions, check completion + reuse
+        // 遍历所有 session，完成的就取新 target 重用
         for (auto& s : sessions_) {
             if (!s || s->idle()) continue;
             active_sessions++;
 
             if (s->ready_to_release()) {
-                // Fetch ONE new target and reuse the session
                 ScanTarget t;
                 if (fetch_one_target(t)) {
                     s->reset(std::move(t),
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                                : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_);
-                    int started = s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
-                    quota -= started;
+                    s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 1);
                 } else {
-                    s->set_expected_tasks(0);
+                    // 队列空，保持 ready_to_release 状态等下一轮
                     active_sessions--;
                 }
-            } else if (quota > 0) {
-                int started = s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
-                quota -= started;
             }
-            if (quota == 0) break;
         }
 
-        // Step 2: create new sessions, one target at a time
-        while (quota > 0 && active_sessions < max_sessions) {
-            ScanTarget t;
-            if (!fetch_one_target(t)) break;  // no more targets
-            active_sessions++;
-            auto sess = std::make_unique<ScanSession>(t,
-                dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                config_.dns_timeout, config_.probe_timeout,
-                config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
-                                       : ScanSession::ProbeMode::ProtocolDefaults,
-                protocols_, result_queue_);
-            int started = sess->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, quota);
-            quota -= started;
-            sessions_.push_back(std::move(sess));
-        }
-
-        // Step 3: check exit condition
         if (input_done_ && targets_.empty() && active_sessions == 0) {
             LOG_CORE_DEBUG("Scan loop: all done, exiting");
             break;
         }
 
-        std::this_thread::sleep_for(active_sessions > 0 ? std::chrono::milliseconds(3)
-                                                        : std::chrono::milliseconds(10));
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     scan_done_ = true;
