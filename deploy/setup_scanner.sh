@@ -93,6 +93,10 @@ Restart=on-failure
 RestartSec=30
 TimeoutStopSec=60
 LimitNOFILE=65535
+# 最后防线：防止打满系统
+MemoryMax=6G
+MemoryHigh=5.5G
+TasksMax=100
 
 StandardOutput=append:/opt/scanner/logs/scanner-%i.log
 StandardError=append:/opt/scanner/logs/scanner-%i-error.log
