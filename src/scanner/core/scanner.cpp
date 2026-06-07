@@ -547,16 +547,36 @@ void Scanner::result_handler_thread() {
         return true;
     };
 
+    uint64_t stalled_seq = 0;
+    auto stall_since = std::chrono::steady_clock::now();
+    static constexpr auto STALL_TIMEOUT = std::chrono::seconds(10);
+
     auto commit_ready_reports = [&]() {
         std::vector<ScanReport> committed_batch;
         while (true) {
             auto it = pending_reports.find(next_commit_seq);
             if (it == pending_reports.end()) {
+                // 检测有序提交 stall：当前 seq 等太久就跳过（only_success 模式下失败不输出）
+                auto now = std::chrono::steady_clock::now();
+                if (stalled_seq != next_commit_seq) {
+                    stalled_seq = next_commit_seq;
+                    stall_since = now;
+                } else if (now - stall_since > STALL_TIMEOUT) {
+                    LOG_CORE_WARN("Skipping stalled seq {} after {}s wait (pending={})",
+                        next_commit_seq,
+                        std::chrono::duration_cast<std::chrono::seconds>(now - stall_since).count(),
+                        pending_reports.size());
+                    ++next_commit_seq;
+                    stalled_seq = next_commit_seq;
+                    stall_since = now;
+                    continue;  // 尝试下一个 seq
+                }
                 break;
             }
             committed_batch.push_back(std::move(it->second));
             pending_reports.erase(it);
             ++next_commit_seq;
+            stalled_seq = 0;  // reset stall tracker
         }
 
         if (committed_batch.empty()) {
@@ -649,8 +669,9 @@ void Scanner::result_handler_thread() {
             }
         }
 
-        // Step 2: 按 seq 写入 pending，并推进连续提交前沿
+        // Step 2: 按 seq 写入 pending（跳过已被 commit 前沿跨越的过期结果），并推进连续提交
         for (auto& r : batch) {
+            if (r.target.seq < next_commit_seq) continue;  // 已被跳过，丢弃
             pending_reports.insert_or_assign(r.target.seq, std::move(r));
         }
         commit_ready_reports();
@@ -698,6 +719,9 @@ void Scanner::result_handler_thread() {
             // Step 2: 处理批次数据（厂商检测、按序提交、checkpoint）
             if (!batch.empty()) {
                 process_batch(batch);
+            } else if (!pending_reports.empty()) {
+                // 无新结果但有未提交的 pending，尝试推进 commit（检测 stall 跳过）
+                commit_ready_reports();
             }
 
             // Step 3: 更新 flush 时间
@@ -729,6 +753,10 @@ void Scanner::result_handler_thread() {
                 if (should_stop) {
                     LOG_CORE_DEBUG("[result_thread] Non-stream mode: stop signal with empty batch, exiting");
                     break;
+                }
+                // 无新结果但有未提交的 pending，尝试推进 commit（检测 stall 跳过）
+                if (!pending_reports.empty()) {
+                    commit_ready_reports();
                 }
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
