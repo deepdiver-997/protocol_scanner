@@ -195,20 +195,10 @@ void Scanner::start(const std::string& source_path) {
         LOG_CORE_DEBUG("Auto-configured result_queue_max_size: {}", config_.result_queue_max_size);
     }
 
-    // 初始化厂商检测（内部封装，不再由 main 管理）
+    // 厂商检测：硬编码禁用（存在 SEGV bug，暂不启用）
+    // TODO: 修复 VendorDetector 并发安全后，可恢复 `if (config_.enable_vendor)` 分支
     vendor_detector_.reset();
     vendor_pattern_path_.clear();
-    if (config_.enable_vendor) {
-        vendor_detector_ = std::make_unique<VendorDetector>();
-        vendor_pattern_path_ = config_.vendor_pattern_file.empty()
-            ? (config_.output_dir + "/vendors.json")
-            : config_.vendor_pattern_file;
-
-        if (!vendor_detector_->load_patterns(vendor_pattern_path_)) {
-            LOG_CORE_WARN("Failed to load vendor patterns from {}", vendor_pattern_path_);
-            vendor_detector_.reset();
-        }
-    }
     
     // 初始化进度管理器
     progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
@@ -308,7 +298,7 @@ void Scanner::start(const std::string& source_path) {
             snap.targets_queue_size = targets_.size();
             snap.result_queue_size  = result_queue_.size();
             snap.pending_reports_size = pending_reports_count_.load();
-            snap.io_pool_loads = io_pool_->pending_counts();
+            snap.io_pool_loads = io_pool_->assign_counts();
 
             // 会话
             snap.total_sessions = sessions_.size();

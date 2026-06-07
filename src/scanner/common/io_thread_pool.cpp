@@ -13,6 +13,7 @@ IoThreadPool::IoThreadPool(std::size_t io_count) {
         guards_.emplace_back(std::make_unique<asio::executor_work_guard<asio::io_context::executor_type>>(contexts_.back()->get_executor()));
         pending_tasks_.emplace_back(std::make_unique<std::atomic<std::size_t>>(0));
     }
+    assign_counts_.resize(io_count);
     for (std::size_t i = 0; i < io_count; ++i) {
         threads_.emplace_back([ctx = contexts_[i].get()]() {
             try {
@@ -34,6 +35,7 @@ asio::io_context& IoThreadPool::get_context() {
 
 IoThreadPool::TrackingExecutor IoThreadPool::get_tracking_executor() {
     auto idx = choose_least_loaded_index();
+    assign_counts_[idx].fetch_add(1, std::memory_order_relaxed);
     return TrackingExecutor(contexts_[idx]->get_executor(), pending_tasks_[idx]);
 }
 

@@ -21,12 +21,12 @@ public:
 
     std::size_t size() const { return contexts_.size(); }
 
-    // 返回每个 io_context 的待处理任务数（用于 metrics 诊断）
-    std::vector<std::size_t> pending_counts() const {
+    // 返回每个 io_context 的分配次数（用于 metrics 诊断 probe 分布）
+    std::vector<std::size_t> assign_counts() const {
         std::vector<std::size_t> counts;
-        counts.reserve(pending_tasks_.size());
-        for (const auto& p : pending_tasks_) {
-            counts.push_back(p->load(std::memory_order_relaxed));
+        counts.reserve(assign_counts_.size());
+        for (const auto& c : assign_counts_) {
+            counts.push_back(c.load(std::memory_order_relaxed));
         }
         return counts;
     }
@@ -87,6 +87,7 @@ private:
     std::vector<std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>> guards_;
     std::vector<std::thread> threads_;
     std::vector<std::unique_ptr<std::atomic<std::size_t>>> pending_tasks_;
+    std::vector<std::atomic<std::size_t>> assign_counts_;  // per-context probe assignment count
 
     mutable std::atomic<std::size_t> rr_{0};
 };
