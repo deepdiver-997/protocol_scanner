@@ -308,6 +308,7 @@ void Scanner::start(const std::string& source_path) {
             snap.targets_queue_size = targets_.size();
             snap.result_queue_size  = result_queue_.size();
             snap.pending_reports_size = pending_reports_count_.load();
+            snap.io_pool_loads = io_pool_->pending_counts();
 
             // 会话
             snap.total_sessions = sessions_.size();
@@ -835,7 +836,6 @@ void Scanner::result_handler_thread() {
 
 void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
-    auto io_exec = io_pool_->get_tracking_executor().underlying_executor();
     auto last_mem_log = std::chrono::steady_clock::now();
 
     int max_sessions = config_.max_work_count > 0
@@ -860,7 +860,8 @@ void Scanner::scan_loop() {
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                    : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_);
-        sess->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 1);
+        sess->start_all_pending_probes(protocols_,
+            io_pool_->get_tracking_executor().underlying_executor(), config_.probe_timeout, 1);
         sessions_.push_back(std::move(sess));
     }
     std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
@@ -887,7 +888,8 @@ void Scanner::scan_loop() {
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                                : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_);
-                    s->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 1);
+                    s->start_all_pending_probes(protocols_,
+                        io_pool_->get_tracking_executor().underlying_executor(), config_.probe_timeout, 1);
                 } else {
                     // 队列空，保持 ready_to_release 状态等下一轮
                     active_sessions--;

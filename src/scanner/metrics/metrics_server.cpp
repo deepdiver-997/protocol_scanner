@@ -69,6 +69,12 @@ std::string MetricsServer::build_json() {
     oss << "\"results\":" << s.result_queue_size << ",";
     oss << "\"pending\":" << s.pending_reports_size;
     oss << "},";
+    oss << "\"io_pool\":[";
+    for (size_t i = 0; i < s.io_pool_loads.size(); ++i) {
+        if (i) oss << ",";
+        oss << s.io_pool_loads[i];
+    }
+    oss << "],";
     oss << "\"sessions\":{";
     oss << "\"active\":" << s.active_sessions << ",";
     oss << "\"total\":" << s.total_sessions;

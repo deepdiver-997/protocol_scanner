@@ -17,6 +17,9 @@ struct MetricsSnapshot {
     size_t result_queue_size     = 0;
     size_t pending_reports_size  = 0;
 
+    // IO 线程池各 context 负载
+    std::vector<size_t> io_pool_loads;
+
     // 会话
     size_t active_sessions  = 0;
     size_t total_sessions   = 0;

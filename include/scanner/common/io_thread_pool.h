@@ -21,6 +21,16 @@ public:
 
     std::size_t size() const { return contexts_.size(); }
 
+    // 返回每个 io_context 的待处理任务数（用于 metrics 诊断）
+    std::vector<std::size_t> pending_counts() const {
+        std::vector<std::size_t> counts;
+        counts.reserve(pending_tasks_.size());
+        for (const auto& p : pending_tasks_) {
+            counts.push_back(p->load(std::memory_order_relaxed));
+        }
+        return counts;
+    }
+
     // 返回负载最小的 io_context 引用（不跟踪任务）
     asio::io_context& get_context();
 
