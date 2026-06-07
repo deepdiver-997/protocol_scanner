@@ -147,15 +147,40 @@ void Scanner::start(const std::string& source_path) {
     scan_done_ = false;
     input_source_path_ = source_path;
 
-    // 【自动配置优化】配置值为0时，根据系统资源自动计算最优值
-    // 此时配置文件和命令行参数都已合并完成
-    if (config_.max_work_count == 0) {
-        config_.max_work_count = ResourceGuard::safe_max_work_count();
-        std::cout << "[init] auto max_work_count=" << config_.max_work_count << std::endl;
+    // 启动前安全检测：验证 max_work_count 不超过临时端口和可用内存的限制
+    {
+        auto limits = ResourceGuard::probe_limits();
+        if (limits.ephemeral_ports > 0) {
+            std::cout << "[guard] ephemeral ports: " << limits.ephemeral_ports
+                      << " → safe ≤ " << limits.max_safe_by_port << std::endl;
+        }
+        if (limits.avail_mem_mb > 0) {
+            std::cout << "[guard] available memory: " << limits.avail_mem_mb
+                      << " MB → safe ≤ " << limits.max_safe_by_mem << std::endl;
+        }
+
+        // 对外暴露 limits，方便外部脚本读取
+        if (config_.max_work_count == 0) {
+            // 自动计算：端口和内存约束取最严
+            size_t safe = limits.max_safe_by_mem;
+            if (limits.max_safe_by_port > 0) {
+                safe = std::min(safe, limits.max_safe_by_port);
+            }
+            if (safe == 0) safe = 20000;  // 无法检测时用保守默认值
+            config_.max_work_count = safe;
+            std::cout << "[guard] auto max_work_count=" << config_.max_work_count << std::endl;
+        } else {
+            // 显式配置值 → 做硬校验，不合规就拒绝启动
+            std::string err = ResourceGuard::validate(config_.max_work_count);
+            if (!err.empty()) {
+                std::cerr << "FATAL: " << err << std::endl;
+                std::cerr << "[guard] Refusing to start — fix config or set max_work_count=0 for auto" << std::endl;
+                std::exit(1);
+            }
+            std::cout << "[guard] max_work_count=" << config_.max_work_count << " passed safety check" << std::endl;
+        }
     }
-    // 启动前安全检测
-    ResourceGuard::check(config_.max_work_count, std::cout);
-    // 始终按 max_work_count 初始化缓冲池（避免显式配置时用默认 3000）
+    // 始终按 max_work_count 初始化缓冲池
     get_global_buffer_pool(std::max<size_t>(config_.max_work_count, 3000));
     
     if (config_.targets_max_size == 0) {
@@ -246,33 +271,24 @@ void Scanner::start(const std::string& source_path) {
         input_thread_func(source_path, has_checkpoint);
     });
     
-    // 【优化】等待 input_thread 至少加载一些 targets，但有超时防止卡住
-    // 即使没有加载完，也要启动 scan_loop 开始消费，否则输入线程会因为 targets 满而阻塞
-    if (has_checkpoint) {
-        LOG_CORE_DEBUG("Waiting for input thread to load initial targets after checkpoint skip...");
-        const size_t min_targets_before_start = 50;  // 至少等待50个target加载
-        const auto start_wait = std::chrono::steady_clock::now();
-        bool got_enough_targets = false;
-        
-        while (!input_done_ && !stop_ && !got_enough_targets) {
+    // 等待 input_thread 加载至少一批 targets 再启动 scan_loop
+    // 大文件（如 22GB 纯 IP）首次读取需要时间，必须等待避免 scan_loop 创建 0 个 session
+    {
+        const size_t min_targets = std::min<size_t>(config_.max_work_count, 100);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        int retries = 0;
+        while (!input_done_ && !stop_) {
             {
                 std::lock_guard<SpinLock> lock(targets_lock_);
-                if (targets_.size() >= min_targets_before_start) {
-                    LOG_CORE_DEBUG("Initial targets loaded ({}), starting scan threads", targets_.size());
-                    got_enough_targets = true;
-                    break;
-                }
+                if (targets_.size() >= min_targets) break;
             }
-            // 自旋等待输入线程填充
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
-
-            auto elapsed = std::chrono::steady_clock::now() - start_wait;
-            if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() > 3) {
-                LOG_CORE_WARN("Timeout waiting for {} targets (have {}), force starting scan threads",
-                              min_targets_before_start, targets_.size());
-                got_enough_targets = true;
+            if (std::chrono::steady_clock::now() > deadline) {
+                LOG_CORE_WARN("Timeout waiting for {} targets (have {}), starting anyway",
+                              min_targets, targets_.size());
                 break;
             }
+            ++retries;
+            std::this_thread::sleep_for(std::chrono::milliseconds(100 + std::min(retries, 20) * 50));
         }
     }
     std::cout << "Already have " << targets_.size() << " targets loaded, starting scan..." << std::endl;
@@ -834,10 +850,19 @@ void Scanner::scan_loop() {
         return true;
     };
 
+    int times = 0;
     // 一次性创建所有 session
     for (int i = 0; i < max_sessions; ++i) {
         ScanTarget t;
-        if (!fetch_one_target(t)) break;
+        if (!fetch_one_target(t)) {
+            if (input_done_) break;
+            ++times;
+            switch (times) {
+                case 1: std::this_thread::sleep_for(std::chrono::microseconds(1000)); break;
+                default:
+            }
+            continue;
+        }
         auto sess = std::make_unique<ScanSession>(t,
             dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
             config_.dns_timeout, config_.probe_timeout,

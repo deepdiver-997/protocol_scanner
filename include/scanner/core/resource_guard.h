@@ -1,18 +1,26 @@
 #pragma once
 
 #include <cstddef>
-#include <iosfwd>
+#include <string>
 
 namespace scanner {
 
-// 启动前安全检查：防止并发数过高导致系统不可达
+// 启动前安全校验：防止并发数过高导致系统不可达
 class ResourceGuard {
 public:
-    // 检查是否安全，输出诊断信息
-    static bool check(size_t max_work_count, std::ostream& out);
+    struct Limits {
+        size_t ephemeral_ports  = 0;   // 临时端口数
+        size_t avail_mem_mb     = 0;   // 可用内存 MB
+        size_t max_safe_by_port = 0;   // 按端口的安全上限
+        size_t max_safe_by_mem  = 0;   // 按内存的安全上限
+    };
 
-    // 返回建议的安全并发数（临时端口 * 0.75 与 可用内存 / 80KB 取较小值）
-    static size_t safe_max_work_count();
+    // 读取系统资源限制，用于日志输出
+    static Limits probe_limits();
+
+    // 验证配置的 max_work_count 是否安全
+    // 返回空字符串表示通过，否则返回错误描述
+    static std::string validate(size_t max_work_count);
 };
 
 } // namespace scanner

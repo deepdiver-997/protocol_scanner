@@ -2,7 +2,6 @@
 #include <cstdint>
 #include <fstream>
 #include <sstream>
-#include <iostream>
 
 #ifdef __linux__
 #include <sys/sysinfo.h>
@@ -28,46 +27,51 @@ static uint64_t read_linux_mem_available_mb() {
     return 0;
 }
 
-bool ResourceGuard::check(size_t max_work_count, std::ostream& out) {
-    bool ok = true;
+ResourceGuard::Limits ResourceGuard::probe_limits() {
+    Limits L;
+    L.ephemeral_ports = read_linux_ephemeral_ports();
+    L.avail_mem_mb    = read_linux_mem_available_mb();
 
-    // 1. 临时端口数 (Linux only)
-    uint32_t ports = read_linux_ephemeral_ports();
-    if (ports > 0) {
-        size_t safe = static_cast<size_t>(ports * 0.75);
-        out << "[guard] ephemeral ports: " << ports
-            << " → safe concurrency ≤ " << safe << std::endl;
-        if (max_work_count > safe) {
-            out << "[guard] WARNING: max_work_count=" << max_work_count
-                << " exceeds safe limit " << safe
-                << " — system may become unreachable!" << std::endl;
-            ok = false;
-        }
+    if (L.ephemeral_ports > 0) {
+        // 每个 session 一个 TCP 连接，预留 25% 给系统和其他进程
+        L.max_safe_by_port = static_cast<size_t>(L.ephemeral_ports * 0.75);
     }
-
-    // 2. 可用内存 (session 预估 ~80KB 每个)
-    uint64_t avail_mb = read_linux_mem_available_mb();
-    if (avail_mb > 0) {
-        size_t mem_safe = static_cast<size_t>(avail_mb / 0.08);  // 80KB per session
-        out << "[guard] available memory: " << avail_mb
-            << " MB → safe concurrency ≤ " << mem_safe << std::endl;
-        if (max_work_count > mem_safe) {
-            out << "[guard] WARNING: max_work_count=" << max_work_count
-                << " may exhaust memory!" << std::endl;
-            ok = false;
-        }
+    if (L.avail_mem_mb > 0) {
+        // 每个 session 约 80KB（socket buffer + session struct + buffer）
+        L.max_safe_by_mem = static_cast<size_t>(L.avail_mem_mb / 0.08);
     }
-
-    return ok;
+    return L;
 }
 
-size_t ResourceGuard::safe_max_work_count() {
-    size_t by_ports = std::min<size_t>(
-        static_cast<size_t>(read_linux_ephemeral_ports() * 0.75), SIZE_MAX / 2);
-    size_t by_mem = static_cast<size_t>(read_linux_mem_available_mb() / 0.08);
-    size_t safe = std::min(by_ports, by_mem);
-    if (safe == 0) safe = 5000; // fallback
-    return safe;
+std::string ResourceGuard::validate(size_t max_work_count) {
+    Limits L = probe_limits();
+
+    // 非 Linux 系统跳过端口和内存检查
+    if (L.ephemeral_ports == 0 && L.avail_mem_mb == 0) {
+        return "";  // 无法检测，放行
+    }
+
+    if (L.max_safe_by_port > 0 && max_work_count > L.max_safe_by_port) {
+        std::ostringstream oss;
+        oss << "max_work_count=" << max_work_count
+            << " exceeds ephemeral port limit ("
+            << L.ephemeral_ports << " ports available, safe ≤ "
+            << L.max_safe_by_port << "). "
+            << "Reduce max_work_count or increase ip_local_port_range.";
+        return oss.str();
+    }
+
+    if (L.max_safe_by_mem > 0 && max_work_count > L.max_safe_by_mem) {
+        std::ostringstream oss;
+        oss << "max_work_count=" << max_work_count
+            << " may exhaust memory ("
+            << L.avail_mem_mb << " MB available, safe ≤ "
+            << L.max_safe_by_mem << "). "
+            << "Reduce max_work_count.";
+        return oss.str();
+    }
+
+    return "";  // OK
 }
 
 } // namespace scanner

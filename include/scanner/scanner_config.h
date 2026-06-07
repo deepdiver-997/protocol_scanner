@@ -42,6 +42,12 @@ struct ScannerConfig {
     bool enable_mysql = false;
     bool scan_all_ports = false;
 
+    bool has_any_protocol_enabled() const {
+        return enable_smtp || enable_pop3 || enable_imap || enable_http ||
+               enable_ftp  || enable_telnet || enable_ssh || enable_redis ||
+               enable_rtsp || enable_sip   || enable_mysql;
+    }
+
     // DNS 配置
     std::string dns_resolver_type = "cares";
     int dns_max_mx_records = 16;

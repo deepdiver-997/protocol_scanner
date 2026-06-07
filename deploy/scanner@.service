@@ -13,9 +13,23 @@ ExecStart=/opt/scanner/bin/run_scan.sh %i
 
 # 安全与资源限制
 Restart=on-failure
-RestartSec=30
+RestartSec=60
 TimeoutStopSec=60
 LimitNOFILE=65535
+
+# 重启风暴保护：120s 内最多重启 3 次，超出则停止
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+# 内存硬限制（8GB 机器的保守值）
+MemoryMax=5G
+MemoryHigh=4.5G
+
+# CPU 限制：6 核留 2 核给系统
+CPUQuota=400%
+
+# 最多 50 个线程
+TasksMax=50
 
 # 自动清理旧日志
 StandardOutput=append:/opt/scanner/logs/scanner-%i.log

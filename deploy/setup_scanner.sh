@@ -90,13 +90,23 @@ Environment=SCANNER_INPUT=/opt/scanner/input/targets.txt
 ExecStart=/opt/scanner/bin/run_scan.sh %i
 
 Restart=on-failure
-RestartSec=30
+RestartSec=60
 TimeoutStopSec=60
 LimitNOFILE=65535
-# 最后防线：防止打满系统
-MemoryMax=6G
-MemoryHigh=5.5G
-TasksMax=100
+
+# 重启风暴保护：120s 内最多重启 3 次
+StartLimitBurst=3
+StartLimitIntervalSec=120
+
+# 内存硬限制
+MemoryMax=5G
+MemoryHigh=4.5G
+
+# CPU 限制：6 核留 2 核
+CPUQuota=400%
+
+# 线程数上限
+TasksMax=50
 
 StandardOutput=append:/opt/scanner/logs/scanner-%i.log
 StandardError=append:/opt/scanner/logs/scanner-%i-error.log

@@ -626,6 +626,20 @@ int main(int argc, char* argv[]) {
 
         LOG_CORE_DEBUG("IO thread pool: {} threads", config.io_thread_count > 0 ? config.io_thread_count : config.thread_count);
 
+        // ---- 启动前安全检查 ----
+
+        // 检查 1: 至少启用了一个协议
+        if (!config.has_any_protocol_enabled()) {
+            std::cerr << "FATAL: No protocol enabled. Use --protocols <NAME> or enable in config." << std::endl;
+            return 1;
+        }
+
+        // 检查 2: 输入文件存在
+        if (!std::filesystem::exists(domains_file)) {
+            std::cerr << "FATAL: Input file not found: " << domains_file << std::endl;
+            return 1;
+        }
+
         if (vm.count("scan")) {
             std::cout << "[config] probe_timeout=" << config.probe_timeout.count() << "ms"
                       << " dns_timeout=" << config.dns_timeout.count() << "ms"
