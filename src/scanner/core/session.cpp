@@ -179,12 +179,15 @@ int ScanSession::start_all_pending_probes(
                     results_.push_back(std::move(r));
                 }
 
-                auto comp = tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1;
-                auto total = tasks_total_.load(std::memory_order_acquire);
-
-                if (comp >= total) {
+                // 必须先快照 target_，再 fetch_add。否则 fetch_add 后
+                // ready_to_release() 变 true，scan_loop 的 reset() 可能并发修改
+                // target_（含 std::string），导致 double-free。
+                ScanTarget target_snapshot = target_;
+                bool is_last = (tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1
+                                >= tasks_total_.load(std::memory_order_acquire));
+                if (is_last) {
                     ScanReport rep;
-                    rep.target = target_;
+                    rep.target = std::move(target_snapshot);
                     rep.total_time = std::chrono::milliseconds(0);
                     {
                         std::lock_guard<std::mutex> lock(results_mutex_);
