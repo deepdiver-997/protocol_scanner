@@ -26,7 +26,7 @@ public:
         std::vector<std::size_t> counts;
         counts.reserve(assign_counts_.size());
         for (const auto& c : assign_counts_) {
-            counts.push_back(c.load(std::memory_order_relaxed));
+            counts.push_back(c->load(std::memory_order_relaxed));
         }
         return counts;
     }
@@ -87,7 +87,7 @@ private:
     std::vector<std::unique_ptr<asio::executor_work_guard<asio::io_context::executor_type>>> guards_;
     std::vector<std::thread> threads_;
     std::vector<std::unique_ptr<std::atomic<std::size_t>>> pending_tasks_;
-    std::vector<std::atomic<std::size_t>> assign_counts_;  // per-context probe assignment count
+    std::vector<std::unique_ptr<std::atomic<std::size_t>>> assign_counts_;  // per-context probe assignment count
 
     mutable std::atomic<std::size_t> rr_{0};
 };
