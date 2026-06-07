@@ -1,0 +1,10 @@
+[Unit]
+Description=Protocol Scanner resource slice
+Before=slices.target
+
+[Slice]
+# 所有 scanner 实例共享这些 cgroup 限制
+MemoryMax=5.5G
+MemoryHigh=5G
+CPUQuota=400%
+TasksMax=60

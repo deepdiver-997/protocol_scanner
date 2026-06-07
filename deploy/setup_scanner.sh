@@ -75,6 +75,19 @@ echo "  启动脚本: $INSTALL_DIR/bin/run_scan.sh"
 
 # ---- 5. 安装 systemd 服务 ----
 echo "[5/5] 安装 systemd 服务模板 ..."
+# 安装 cgroup slice
+cat > /etc/systemd/system/scanner.slice << 'SLICE'
+[Unit]
+Description=Protocol Scanner resource slice
+Before=slices.target
+
+[Slice]
+MemoryMax=5.5G
+MemoryHigh=5G
+CPUQuota=400%
+TasksMax=60
+SLICE
+
 cat > /etc/systemd/system/scanner@.service << 'UNIT'
 [Unit]
 Description=Protocol Scanner - %i scan
@@ -89,34 +102,46 @@ Environment=SCANNER_CONFIG=/opt/scanner/config/scanner_config.json
 Environment=SCANNER_INPUT=/opt/scanner/input/targets.txt
 ExecStart=/opt/scanner/bin/run_scan.sh %i
 
+# === cgroup 层级隔离 ===
+Slice=scanner.slice
+
+# === 重启策略 ===
 Restart=on-failure
 RestartSec=60
 TimeoutStopSec=60
 LimitNOFILE=65535
 
-# 重启风暴保护：120s 内最多重启 3 次
+# 重启风暴保护：120s 内最多重启 3 次，超出则停止
 StartLimitBurst=3
 StartLimitIntervalSec=120
 
-# 内存硬限制
+# === 内存硬限制 ===
 MemoryMax=5G
 MemoryHigh=4.5G
 
-# CPU 限制：6 核留 2 核
+# === CPU 限制：6 核留 2 核 ===
 CPUQuota=400%
 
-# 线程数上限
+# === 线程上限 ===
 TasksMax=50
 
-StandardOutput=append:/opt/scanner/logs/scanner-%i.log
-StandardError=append:/opt/scanner/logs/scanner-%i-error.log
+# === IO 限制：防磁盘打满 ===
+IOWriteBandwidthMax=/opt 50M
+IOReadBandwidthMax=/opt 200M
+
+# === 日志 ===
+# stdout/stderr 进 journal（自动轮转），scanner 自身日志走配置文件中的 logrotate
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-%i
 
 [Install]
 WantedBy=multi-user.target
 UNIT
 
 systemctl daemon-reload
-echo "  服务模板已安装: /etc/systemd/system/scanner@.service"
+echo "  已安装: /etc/systemd/system/scanner.slice"
+echo "  已安装: /etc/systemd/system/scanner@.service"
 
 echo ""
 echo "========================================="

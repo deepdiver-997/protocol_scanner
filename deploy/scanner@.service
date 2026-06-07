@@ -11,7 +11,10 @@ Environment=SCANNER_CONFIG=/opt/scanner/config/scanner_config.json
 Environment=SCANNER_INPUT=/opt/scanner/input/targets.txt
 ExecStart=/opt/scanner/bin/run_scan.sh %i
 
-# 安全与资源限制
+# === cgroup 层级隔离 ===
+Slice=scanner.slice
+
+# === 重启策略 ===
 Restart=on-failure
 RestartSec=60
 TimeoutStopSec=60
@@ -21,19 +24,26 @@ LimitNOFILE=65535
 StartLimitBurst=3
 StartLimitIntervalSec=120
 
-# 内存硬限制（8GB 机器的保守值）
+# === 内存硬限制 ===
 MemoryMax=5G
 MemoryHigh=4.5G
 
-# CPU 限制：6 核留 2 核给系统
+# === CPU 限制：6 核留 2 核 ===
 CPUQuota=400%
 
-# 最多 50 个线程
+# === 线程上限 ===
 TasksMax=50
 
-# 自动清理旧日志
-StandardOutput=append:/opt/scanner/logs/scanner-%i.log
-StandardError=append:/opt/scanner/logs/scanner-%i-error.log
+# === IO 限制：防磁盘打满 ===
+# 写上限 50MB/s，读上限 200MB/s
+IOWriteBandwidthMax=/opt 50M
+IOReadBandwidthMax=/opt 200M
+
+# === 日志 ===
+# stdout/stderr 进 journal（自动轮转），scanner 自身日志走配置文件中的 logrotate
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=scanner-%i
 
 [Install]
 WantedBy=multi-user.target
