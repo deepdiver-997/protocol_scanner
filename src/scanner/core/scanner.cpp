@@ -298,7 +298,7 @@ void Scanner::start(const std::string& source_path) {
             snap.targets_queue_size = targets_.size();
             snap.result_queue_size  = result_queue_.size();
             snap.pending_reports_size = pending_reports_count_.load();
-            snap.io_pool_loads = io_pool_->assign_counts();
+            snap.io_pool_loads = io_pool_->io_loads();
 
             // 会话
             snap.total_sessions = sessions_.size();
@@ -850,8 +850,10 @@ void Scanner::scan_loop() {
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                    : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_);
+        int ctx_idx = io_pool_->acquire_context();
+        sess->set_io_context_idx(ctx_idx);
         sess->start_all_pending_probes(protocols_,
-            io_pool_->get_tracking_executor().underlying_executor(), config_.probe_timeout, 1);
+            io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1);
         sessions_.push_back(std::move(sess));
     }
     std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
@@ -872,14 +874,18 @@ void Scanner::scan_loop() {
             active_sessions++;
 
             if (s->ready_to_release()) {
+                // 释放旧 context 负载
+                io_pool_->release_context(s->io_context_idx());
                 ScanTarget t;
                 if (fetch_one_target(t)) {
+                    int ctx_idx = io_pool_->acquire_context();
+                    s->set_io_context_idx(ctx_idx);
                     s->reset(std::move(t),
                         config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                                : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_);
                     s->start_all_pending_probes(protocols_,
-                        io_pool_->get_tracking_executor().underlying_executor(), config_.probe_timeout, 1);
+                        io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1);
                 } else {
                     // 队列空，保持 ready_to_release 状态等下一轮
                     active_sessions--;

@@ -35,11 +35,21 @@ asio::io_context& IoThreadPool::get_context() {
     return *contexts_[idx];
 }
 
-IoThreadPool::TrackingExecutor IoThreadPool::get_tracking_executor() {
-    // 纯 round-robin：load-based 选择在 bypass TrackingExecutor 时不可用
-    // （pending_tasks_ 永远为 0，因为 .underlying_executor() 绕过了计数）
+int IoThreadPool::acquire_context() {
     auto idx = rr_.fetch_add(1, std::memory_order_relaxed) % contexts_.size();
+    pending_tasks_[idx]->fetch_add(1, std::memory_order_relaxed);
     assign_counts_[idx]->fetch_add(1, std::memory_order_relaxed);
+    return static_cast<int>(idx);
+}
+
+void IoThreadPool::release_context(int idx) {
+    if (idx >= 0 && static_cast<std::size_t>(idx) < pending_tasks_.size()) {
+        pending_tasks_[idx]->fetch_sub(1, std::memory_order_relaxed);
+    }
+}
+
+IoThreadPool::TrackingExecutor IoThreadPool::get_tracking_executor() {
+    auto idx = static_cast<std::size_t>(acquire_context());
     return TrackingExecutor(contexts_[idx]->get_executor(), pending_tasks_[idx]);
 }
 

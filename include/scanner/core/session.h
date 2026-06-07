@@ -44,6 +44,8 @@ public:
         if (tasks_total() == 0) return true;
         return tasks_completed() >= tasks_total();
     }
+    int io_context_idx() const { return io_context_idx_; }
+    void set_io_context_idx(int idx) { io_context_idx_ = idx; }
     std::size_t tasks_total() const { return tasks_total_.load(std::memory_order_relaxed); }
     std::size_t tasks_completed() const { return tasks_completed_.load(std::memory_order_relaxed); }
 
@@ -90,6 +92,7 @@ private:
     std::atomic<std::size_t> tasks_total_{0};
     std::atomic<std::size_t> tasks_completed_{0};
     std::atomic<uint64_t> generation_{0};
+    int io_context_idx_{-1};
 
     bool only_success_{false};
 };

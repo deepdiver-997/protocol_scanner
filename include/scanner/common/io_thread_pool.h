@@ -21,7 +21,25 @@ public:
 
     std::size_t size() const { return contexts_.size(); }
 
-    // 返回每个 io_context 的分配次数（用于 metrics 诊断 probe 分布）
+    // ---- 负载感知的 context 分配 (供 scan_loop 使用) ----
+    // 分配一个 io_context，返回 index，同时递增该 context 的负载计数
+    int acquire_context();
+    // 释放一个 io_context，递减负载计数
+    void release_context(int idx);
+    // 根据 index 获取 executor
+    asio::any_io_executor executor_for(int idx) { return contexts_[idx]->get_executor(); }
+
+    // 实时负载（metrics 用）：每个 context 当前有多少 probe 在用
+    std::vector<std::size_t> io_loads() const {
+        std::vector<std::size_t> counts;
+        counts.reserve(pending_tasks_.size());
+        for (const auto& c : pending_tasks_) {
+            counts.push_back(c->load(std::memory_order_relaxed));
+        }
+        return counts;
+    }
+
+    // 累计分配次数（用于验证 round-robin 是否均匀）
     std::vector<std::size_t> assign_counts() const {
         std::vector<std::size_t> counts;
         counts.reserve(assign_counts_.size());
