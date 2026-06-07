@@ -850,19 +850,10 @@ void Scanner::scan_loop() {
         return true;
     };
 
-    int times = 0;
-    // 一次性创建所有 session
+    // 一次性创建所有 session（start() 已等待 targets 就绪，这里必能取到）
     for (int i = 0; i < max_sessions; ++i) {
         ScanTarget t;
-        if (!fetch_one_target(t)) {
-            if (input_done_) break;
-            ++times;
-            switch (times) {
-                case 1: std::this_thread::sleep_for(std::chrono::microseconds(1000)); break;
-                default:
-            }
-            continue;
-        }
+        if (!fetch_one_target(t)) break;
         auto sess = std::make_unique<ScanSession>(t,
             dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
             config_.dns_timeout, config_.probe_timeout,
