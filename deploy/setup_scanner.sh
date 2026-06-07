@@ -139,9 +139,39 @@ SyslogIdentifier=scanner-%i
 WantedBy=multi-user.target
 UNIT
 
+# 安装磁盘守卫：每 5 分钟检查一次，超过 100GB 就停掉所有 scanner
+cat > /etc/systemd/system/scanner-disk-guard.service << 'GUARD'
+[Unit]
+Description=Scanner disk guard — stops scanners if /opt/scanner exceeds 100GB
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+  THRESHOLD_MB=102400; \
+  USED=$$(du -sm /opt/scanner 2>/dev/null | cut -f1); \
+  if [ "$$USED" -gt "$$THRESHOLD_MB" ]; then \
+    echo "FATAL: /opt/scanner using $${USED}MB > $${THRESHOLD_MB}MB, stopping all scanners"; \
+    systemctl stop "scanner@*.service" 2>/dev/null; \
+  fi'
+GUARD
+
+cat > /etc/systemd/system/scanner-disk-guard.timer << 'TIMER'
+[Unit]
+Description=Run scanner disk guard every 5 minutes
+
+[Timer]
+OnCalendar=*:0/5
+Persistent=true
+
+[Install]
+WantedBy=timers.target
+TIMER
+
 systemctl daemon-reload
+systemctl enable --now scanner-disk-guard.timer
 echo "  已安装: /etc/systemd/system/scanner.slice"
 echo "  已安装: /etc/systemd/system/scanner@.service"
+echo "  已安装: scanner-disk-guard.timer (100GB 上限，每 5 分钟检查)"
 
 echo ""
 echo "========================================="

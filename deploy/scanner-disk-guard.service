@@ -1,0 +1,12 @@
+[Unit]
+Description=Scanner disk usage guard — stops all scanners if /opt/scanner exceeds threshold
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c '\
+  THRESHOLD_MB=102400; \
+  USED=$(du -sm /opt/scanner 2>/dev/null | cut -f1); \
+  if [ "$USED" -gt "$THRESHOLD_MB" ]; then \
+    echo "FATAL: /opt/scanner using ${USED}MB > ${THRESHOLD_MB}MB, stopping all scanners"; \
+    systemctl stop "scanner@*.service" 2>/dev/null; \
+  fi'
