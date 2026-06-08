@@ -16,11 +16,12 @@ public:
     };
 
     // 读取系统资源限制，用于日志输出
-    static Limits probe_limits();
+    // bind_ip_count: 多 IP 绑定数量，每个 IP 有独立的端口池
+    static Limits probe_limits(size_t bind_ip_count = 0);
 
     // 验证配置的 max_work_count 是否安全
     // 返回空字符串表示通过，否则返回错误描述
-    static std::string validate(size_t max_work_count);
+    static std::string validate(size_t max_work_count, size_t bind_ip_count = 0);
 };
 
 } // namespace scanner

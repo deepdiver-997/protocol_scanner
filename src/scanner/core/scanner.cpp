@@ -149,9 +149,11 @@ void Scanner::start(const std::string& source_path) {
 
     // 启动前安全检测：验证 max_work_count 不超过临时端口和可用内存的限制
     {
-        auto limits = ResourceGuard::probe_limits();
+        size_t bind_ip_count = config_.bind_ips.empty() ? 1 : config_.bind_ips.size();
+        auto limits = ResourceGuard::probe_limits(bind_ip_count);
         if (limits.ephemeral_ports > 0) {
             std::cout << "[guard] ephemeral ports: " << limits.ephemeral_ports
+                      << " × " << bind_ip_count << " IP(s)"
                       << " → safe ≤ " << limits.max_safe_by_port << std::endl;
         }
         if (limits.avail_mem_mb > 0) {
@@ -171,7 +173,7 @@ void Scanner::start(const std::string& source_path) {
             std::cout << "[guard] auto max_work_count=" << config_.max_work_count << std::endl;
         } else {
             // 显式配置值 → 做硬校验；超出上限则自动 cap（兼容 main.cpp 的 FD 级自动值）
-            std::string err = ResourceGuard::validate(config_.max_work_count);
+            std::string err = ResourceGuard::validate(config_.max_work_count, bind_ip_count);
             if (!err.empty()) {
                 std::cerr << "[guard] WARNING: " << err << std::endl;
                 size_t safe = limits.max_safe_by_mem;

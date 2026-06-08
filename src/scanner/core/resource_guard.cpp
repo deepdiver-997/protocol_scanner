@@ -27,14 +27,15 @@ static uint64_t read_linux_mem_available_mb() {
     return 0;
 }
 
-ResourceGuard::Limits ResourceGuard::probe_limits() {
+ResourceGuard::Limits ResourceGuard::probe_limits(size_t bind_ip_count) {
     Limits L;
     L.ephemeral_ports = read_linux_ephemeral_ports();
     L.avail_mem_mb    = read_linux_mem_available_mb();
 
+    size_t ip_count = bind_ip_count > 0 ? bind_ip_count : 1;
     if (L.ephemeral_ports > 0) {
-        // 每个 session 一个 TCP 连接，预留 25% 给系统和其他进程
-        L.max_safe_by_port = static_cast<size_t>(L.ephemeral_ports * 0.75);
+        // 每个 IP 有独立的临时端口池；预留 25% 给系统
+        L.max_safe_by_port = static_cast<size_t>(L.ephemeral_ports * 0.75 * ip_count);
     }
     if (L.avail_mem_mb > 0) {
         // 每个 session 约 80KB（socket buffer + session struct + buffer）
@@ -43,8 +44,8 @@ ResourceGuard::Limits ResourceGuard::probe_limits() {
     return L;
 }
 
-std::string ResourceGuard::validate(size_t max_work_count) {
-    Limits L = probe_limits();
+std::string ResourceGuard::validate(size_t max_work_count, size_t bind_ip_count) {
+    Limits L = probe_limits(bind_ip_count);
 
     // 非 Linux 系统跳过端口和内存检查
     if (L.ephemeral_ports == 0 && L.avail_mem_mb == 0) {
