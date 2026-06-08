@@ -27,7 +27,10 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode,
     generation_.fetch_add(1, std::memory_order_release);
     tasks_total_.store(0, std::memory_order_relaxed);
     tasks_completed_.store(0, std::memory_order_relaxed);
-    results_.clear();
+    {
+        std::lock_guard<std::mutex> lock(results_mutex_);
+        results_.clear();
+    }
     available_ports_.clear();
 
     // DNS 解析
