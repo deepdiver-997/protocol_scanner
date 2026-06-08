@@ -170,14 +170,20 @@ void Scanner::start(const std::string& source_path) {
             config_.max_work_count = safe;
             std::cout << "[guard] auto max_work_count=" << config_.max_work_count << std::endl;
         } else {
-            // 显式配置值 → 做硬校验，不合规就拒绝启动
+            // 显式配置值 → 做硬校验；超出上限则自动 cap（兼容 main.cpp 的 FD 级自动值）
             std::string err = ResourceGuard::validate(config_.max_work_count);
             if (!err.empty()) {
-                std::cerr << "FATAL: " << err << std::endl;
-                std::cerr << "[guard] Refusing to start — fix config or set max_work_count=0 for auto" << std::endl;
-                std::exit(1);
+                std::cerr << "[guard] WARNING: " << err << std::endl;
+                size_t safe = limits.max_safe_by_mem;
+                if (limits.max_safe_by_port > 0) {
+                    safe = std::min(safe, limits.max_safe_by_port);
+                }
+                if (safe == 0) safe = 20000;
+                std::cerr << "[guard] Auto-capping to " << safe << std::endl;
+                config_.max_work_count = safe;
+            } else {
+                std::cout << "[guard] max_work_count=" << config_.max_work_count << " passed safety check" << std::endl;
             }
-            std::cout << "[guard] max_work_count=" << config_.max_work_count << " passed safety check" << std::endl;
         }
     }
     // 始终按 max_work_count 初始化缓冲池
