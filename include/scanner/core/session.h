@@ -67,7 +67,8 @@ public:
         const std::vector<std::unique_ptr<IProtocol>>& protocols,
         const boost::asio::any_io_executor& exec,
         Timeout timeout,
-        int quota = INT_MAX
+        int quota = INT_MAX,
+        const std::string& bind_ip = ""
     );
 
 private:

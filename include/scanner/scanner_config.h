@@ -27,6 +27,7 @@ struct ScannerConfig {
     bool only_success = false;
     size_t max_work_count = 0;
     uint16_t metrics_port = 9080;
+    std::vector<std::string> bind_ips;  // 多 IP 绑定，分散临时端口池
 
     // Protocol 配置
     bool enable_smtp = false;

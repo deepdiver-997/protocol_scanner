@@ -131,7 +131,8 @@ int ScanSession::start_all_pending_probes(
     const std::vector<std::unique_ptr<IProtocol>>& protocols,
     const boost::asio::any_io_executor& exec,
     Timeout timeout,
-    int quota
+    int quota,
+    const std::string& bind_ip
 ) {
     if (target_.ip_uint == 0) return 0;
 
@@ -198,7 +199,8 @@ int ScanSession::start_all_pending_probes(
                     }
                     grq->push(std::move(rep));
                 }
-            }
+            },
+            bind_ip
         );
         ++launched;
     }

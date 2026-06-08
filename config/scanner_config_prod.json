@@ -11,7 +11,8 @@
     "max_work_count": 20000,
     "targets_max_size": 0,
     "result_queue_max_size": 0,
-    "metrics_port": 9080
+    "metrics_port": 9080,
+    "bind_ips": ["192.3.199.159", "192.3.199.163"]
   },
   "protocols": {
     "_comment": "所有协议默认 disabled，通过 --protocols <NAME> 单选; 超时按协议特点设置",

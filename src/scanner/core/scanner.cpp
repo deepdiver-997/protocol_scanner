@@ -874,6 +874,12 @@ void Scanner::scan_loop() {
         return true;
     };
 
+    auto next_bind_ip = [this]() -> std::string {
+        if (config_.bind_ips.empty()) return "";
+        size_t idx = bind_ip_rr_.fetch_add(1, std::memory_order_relaxed) % config_.bind_ips.size();
+        return config_.bind_ips[idx];
+    };
+
     // 一次性创建所有 session（start() 已等待 targets 就绪，这里必能取到）
     for (int i = 0; i < max_sessions; ++i) {
         ScanTarget t;
@@ -887,7 +893,7 @@ void Scanner::scan_loop() {
         int ctx_idx = io_pool_->acquire_context();
         sess->set_io_context_idx(ctx_idx);
         sess->start_all_pending_probes(protocols_,
-            io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1);
+            io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1, next_bind_ip());
         sessions_.push_back(std::move(sess));
     }
     std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
@@ -919,7 +925,7 @@ void Scanner::scan_loop() {
                                                : ScanSession::ProbeMode::ProtocolDefaults,
                         protocols_);
                     s->start_all_pending_probes(protocols_,
-                        io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1);
+                        io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1, next_bind_ip());
                 } else {
                     // 队列空，保持 ready_to_release 状态等下一轮
                     active_sessions--;

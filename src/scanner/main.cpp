@@ -218,6 +218,11 @@ ScannerConfig load_config(const string& config_file) {
                 if (s.contains("result_queue_max_size")) config.result_queue_max_size = s["result_queue_max_size"];
                 if (s.contains("enable_crash_inspection")) config.enable_crash_inspection = s["enable_crash_inspection"];
                 if (s.contains("metrics_port")) config.metrics_port = s["metrics_port"];
+                if (s.contains("bind_ips")) {
+                    for (const auto& ip : s["bind_ips"]) {
+                        config.bind_ips.push_back(ip.get<std::string>());
+                    }
+                }
             }
 
             // ===== Protocols 配置 =====

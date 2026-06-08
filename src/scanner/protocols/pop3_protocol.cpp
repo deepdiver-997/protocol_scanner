@@ -67,7 +67,8 @@ void Pop3Protocol::async_probe(
     Port port,
     Timeout timeout,
     boost::asio::any_io_executor exec,
-    std::function<void(ProtocolResult&&)> on_complete
+    std::function<void(ProtocolResult&&)> on_complete,
+    const std::string& bind_ip
 ) {
     auto ctx = std::make_shared<Pop3ProbeContext>(std::move(exec), timeout, std::move(on_complete));
     ctx->result.protocol = name();

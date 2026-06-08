@@ -65,7 +65,8 @@ void SshProtocol::async_probe(
     Port port,
     Timeout timeout,
     boost::asio::any_io_executor exec,
-    std::function<void(ProtocolResult&&)> on_complete
+    std::function<void(ProtocolResult&&)> on_complete,
+    const std::string& bind_ip
 ) {
     auto ctx = std::make_shared<SshProbeContext>(std::move(exec), timeout, std::move(on_complete));
     ctx->result.protocol = name();
@@ -83,6 +84,16 @@ void SshProtocol::async_probe(
     ctx->socket.set_option(recv_buf, set_ec);
     ctx->socket.set_option(send_buf, set_ec);
     ctx->socket.set_option(no_delay_opt, set_ec);
+
+    // 绑定到指定本地 IP（多 IP 场景下分散临时端口池）
+    if (!bind_ip.empty()) {
+        boost::system::error_code bind_ec;
+        ctx->socket.bind(tcp::endpoint(asio::ip::make_address(bind_ip, bind_ec), 0), bind_ec);
+        if (bind_ec) {
+            ctx->finish_error("Bind failed: " + bind_ec.message());
+            return;
+        }
+    }
 
     ctx->timer.expires_after(timeout);
     ctx->timer.async_wait([this, ctx](const boost::system::error_code& ec) {

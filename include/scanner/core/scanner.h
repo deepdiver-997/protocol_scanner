@@ -161,6 +161,7 @@ private:
     std::string input_source_path_;
     std::string input_source_hash_;
     std::atomic<size_t> processed_count_{0};  // 已处理（完成扫描）的目标数
+    std::atomic<size_t> bind_ip_rr_{0};       // round-robin index for bind_ips
     CheckpointInfo checkpoint_info_;
 };
 

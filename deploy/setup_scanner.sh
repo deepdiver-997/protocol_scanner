@@ -29,8 +29,6 @@ cd "$PROJECT_DIR"
 mkdir -p "$BUILD_DIR"
 cmake -S . -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE=InfoRelease \
-    -DCMAKE_CXX_FLAGS="-fsanitize=address -fno-omit-frame-pointer -g" \
-    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address" \
     -DUSE_CARES=OFF \
     -DENABLE_LOGGING=ON
 
