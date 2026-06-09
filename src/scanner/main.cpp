@@ -223,6 +223,8 @@ ScannerConfig load_config(const string& config_file) {
                         config.bind_ips.push_back(ip.get<std::string>());
                     }
                 }
+                if (s.contains("enable_zmap_filter")) config.enable_zmap_filter = s["enable_zmap_filter"];
+                if (s.contains("zmap_port")) config.zmap_port = s["zmap_port"];
             }
 
             // ===== Protocols 配置 =====

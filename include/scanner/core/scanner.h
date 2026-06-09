@@ -106,6 +106,9 @@ private:
     // 输入线程函数
     void input_thread_func(const std::string& source_path, bool has_checkpoint);
 
+    // ZMap 预过滤：快速扫描开放端口，返回过滤后的输入文件路径
+    std::string preprocess_zmap(const std::string& source_path);
+
     ScannerConfig config_;
     std::vector<std::unique_ptr<IProtocol>> protocols_;
     std::unique_ptr<class IDnsResolver> dns_resolver_;

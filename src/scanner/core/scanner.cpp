@@ -141,11 +141,45 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
     return false;
 }
 
+std::string Scanner::preprocess_zmap(const std::string& source_path) {
+    if (!config_.enable_zmap_filter) return source_path;
+
+    int zmap_port = config_.zmap_port > 0 ? config_.zmap_port
+        : (config_.enable_ssh ? 22 : config_.enable_http ? 80 : 0);
+    if (zmap_port == 0) {
+        std::cerr << "[zmap] No enabled protocol with default port, skip filter" << std::endl;
+        return source_path;
+    }
+
+    std::string zmap_output = source_path + ".zmap_out";
+    if (!fs::exists(zmap_output)) {
+        std::string cmd = "zmap -p " + std::to_string(zmap_port)
+                        + " -B 10M -o " + zmap_output
+                        + " " + source_path + " 2>&1";
+        std::cout << "[zmap] Running: " << cmd << std::endl;
+        int ret = std::system(cmd.c_str());
+        if (ret != 0) {
+            std::cerr << "[zmap] zmap exited with " << ret
+                      << ", falling back to raw input" << std::endl;
+            return source_path;
+        }
+    }
+
+    if (fs::exists(zmap_output)) {
+        std::cout << "[zmap] Using filtered input: " << zmap_output
+                  << " (" << fs::file_size(zmap_output) / 1024 << " KB)" << std::endl;
+        return zmap_output;
+    }
+    return source_path;
+}
+
 void Scanner::start(const std::string& source_path) {
     stop_ = false;
     input_done_ = false;
     scan_done_ = false;
-    input_source_path_ = source_path;
+
+    std::string actual_source = preprocess_zmap(source_path);
+    input_source_path_ = actual_source;
 
     // 启动前安全检测：验证 max_work_count 不超过临时端口和可用内存的限制
     {
@@ -209,8 +243,8 @@ void Scanner::start(const std::string& source_path) {
     vendor_pattern_path_.clear();
     
     // 初始化进度管理器
-    progress_manager_ = std::make_unique<ProgressManager>(source_path, config_.output_dir);
-    input_source_hash_ = ProgressManager::compute_file_hash(source_path);
+    progress_manager_ = std::make_unique<ProgressManager>(actual_source, config_.output_dir);
+    input_source_hash_ = ProgressManager::compute_file_hash(actual_source);
 
     std::error_code output_dir_ec;
     fs::create_directories(config_.output_dir, output_dir_ec);
@@ -243,7 +277,7 @@ void Scanner::start(const std::string& source_path) {
     std::cout << "Checkpoint loaded: " << (has_checkpoint ? "yes" : "no") << std::endl;
     if (has_checkpoint) {
         if (!checkpoint_info_.input_file_hash.empty() && checkpoint_info_.input_file_hash != input_source_hash_) {
-            LOG_CORE_WARN("Checkpoint hash mismatch, ignoring stale checkpoint for {}", source_path);
+            LOG_CORE_WARN("Checkpoint hash mismatch, ignoring stale checkpoint for {}", actual_source);
             checkpoint_info_ = CheckpointInfo{};
             has_checkpoint = false;
         }
@@ -265,8 +299,8 @@ void Scanner::start(const std::string& source_path) {
     }
     
     // 启动三个线程
-    input_thread_ = std::thread([this, source_path, has_checkpoint]() {
-        input_thread_func(source_path, has_checkpoint);
+    input_thread_ = std::thread([this, actual_source, has_checkpoint]() {
+        input_thread_func(actual_source, has_checkpoint);
     });
     
     // 等待 input_thread 加载至少一批 targets 再启动 scan_loop
@@ -342,7 +376,7 @@ void Scanner::start(const std::string& source_path) {
         }
     });
 
-    LOG_CORE_INFO("Scanner started with input source: {}", source_path);
+    LOG_CORE_INFO("Scanner started with input source: {}", actual_source);
 }
 
 void Scanner::input_thread_func(const std::string& source_path, bool has_checkpoint) {
