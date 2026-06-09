@@ -143,17 +143,14 @@ bool Scanner::is_protocol_enabled(const std::string& name) const {
 
 std::string Scanner::preprocess_zmap(const std::string& source_path) {
     if (!config_.enable_zmap_filter) return source_path;
-
-    int zmap_port = config_.zmap_port > 0 ? config_.zmap_port
-        : (config_.enable_ssh ? 22 : config_.enable_http ? 80 : 0);
-    if (zmap_port == 0) {
-        std::cerr << "[zmap] No enabled protocol with default port, skip filter" << std::endl;
+    if (config_.zmap_port == 0) {
+        std::cerr << "[zmap] zmap_port must be > 0 when enable_zmap_filter=true, skip filter" << std::endl;
         return source_path;
     }
 
     std::string zmap_output = source_path + ".zmap_out";
     if (!fs::exists(zmap_output)) {
-        std::string cmd = "zmap -p " + std::to_string(zmap_port)
+        std::string cmd = "zmap -p " + std::to_string(config_.zmap_port)
                         + " -B 10M -o " + zmap_output
                         + " " + source_path + " 2>&1";
         std::cout << "[zmap] Running: " << cmd << std::endl;

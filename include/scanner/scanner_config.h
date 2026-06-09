@@ -29,7 +29,7 @@ struct ScannerConfig {
     uint16_t metrics_port = 9080;
     std::vector<std::string> bind_ips;  // 多 IP 绑定，分散临时端口池
     bool enable_zmap_filter = false;    // 启用 ZMap 预过滤：先扫开放端口再精细识别
-    int zmap_port = 0;                  // ZMap 扫描端口，0=根据启用的协议自动选择
+    int zmap_port = 0;                  // ZMap 扫描端口，0=不使用 zmap
 
     // Protocol 配置
     bool enable_smtp = false;
