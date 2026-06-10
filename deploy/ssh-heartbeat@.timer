@@ -1,0 +1,10 @@
+[Unit]
+Description=SSH heartbeat every 30s — dead-man switch for scanner
+
+[Timer]
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

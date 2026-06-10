@@ -167,11 +167,17 @@ Persistent=true
 WantedBy=timers.target
 TIMER
 
+# 安装死绳开关：心跳过期自动停 scanner（需配合阿里云 ssh-heartbeat 定时器）
+cp "$PROJECT_DIR/deploy/scanner-watchdog.service" /etc/systemd/system/scanner-watchdog.service
+cp "$PROJECT_DIR/deploy/scanner-watchdog.timer" /etc/systemd/system/scanner-watchdog.timer
+
 systemctl daemon-reload
 systemctl enable --now scanner-disk-guard.timer
+systemctl enable --now scanner-watchdog.timer
 echo "  已安装: /etc/systemd/system/scanner.slice"
 echo "  已安装: /etc/systemd/system/scanner@.service"
 echo "  已安装: scanner-disk-guard.timer (100GB 上限，每 5 分钟检查)"
+echo "  已安装: scanner-watchdog.timer (心跳过期 120s 自动停 scanner)"
 
 echo ""
 echo "========================================="

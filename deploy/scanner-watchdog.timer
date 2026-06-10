@@ -1,0 +1,10 @@
+[Unit]
+Description=Scanner dead-man switch: check heartbeat every minute
+
+[Timer]
+OnCalendar=*:0/1
+AccuracySec=5s
+Persistent=true
+
+[Install]
+WantedBy=timers.target

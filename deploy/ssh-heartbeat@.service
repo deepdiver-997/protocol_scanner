@@ -1,0 +1,9 @@
+[Unit]
+Description=SSH heartbeat to %i (touch heartbeat file for dead-man switch)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=TARGET=%i
+ExecStart=/usr/bin/ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new -p 52288 root@%i "touch /tmp/aliyun_heartbeat"
