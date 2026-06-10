@@ -2,6 +2,7 @@
 Description=SSH heartbeat every 30s — dead-man switch for scanner
 
 [Timer]
+OnActiveSec=5s
 OnUnitActiveSec=30s
 AccuracySec=5s
 Persistent=true
