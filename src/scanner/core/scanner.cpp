@@ -148,24 +148,31 @@ std::string Scanner::preprocess_zmap(const std::string& source_path) {
         return source_path;
     }
 
-    std::string zmap_output = source_path + ".zmap_out";
-    if (!fs::exists(zmap_output)) {
+    std::string out_dir = config_.output_dir;
+    if (!out_dir.empty() && out_dir.back() != '/') out_dir += "/";
+    std::string zmap_file = out_dir + "zmap_port" + std::to_string(config_.zmap_port) + ".txt";
+
+    if (!fs::exists(zmap_file)) {
+        std::string tmp_file = zmap_file + ".tmp";
         std::string cmd = "zmap -p " + std::to_string(config_.zmap_port)
-                        + " -B 10M -o " + zmap_output
+                        + " -r 100000 -B 10M -o " + tmp_file
                         + " " + source_path + " 2>&1";
         std::cout << "[zmap] Running: " << cmd << std::endl;
+        std::cout << "[zmap] Scanning 1.6B IPs at 100K pps ≈ 4.4 hours" << std::endl;
         int ret = std::system(cmd.c_str());
-        if (ret != 0) {
-            std::cerr << "[zmap] zmap exited with " << ret
-                      << ", falling back to raw input" << std::endl;
+        if (ret != 0 || !fs::exists(tmp_file)) {
+            std::cerr << "[zmap] zmap failed (exit " << ret << "), falling back to raw input" << std::endl;
+            fs::remove(tmp_file, std::error_code{});
             return source_path;
         }
+        fs::rename(tmp_file, zmap_file);
+        std::cout << "[zmap] Saved: " << zmap_file
+                  << " (" << fs::file_size(zmap_file) / 1024 / 1024 << " MB)" << std::endl;
     }
 
-    if (fs::exists(zmap_output)) {
-        std::cout << "[zmap] Using filtered input: " << zmap_output
-                  << " (" << fs::file_size(zmap_output) / 1024 << " KB)" << std::endl;
-        return zmap_output;
+    if (fs::exists(zmap_file)) {
+        std::cout << "[zmap] Using filtered input: " << zmap_file << std::endl;
+        return zmap_file;
     }
     return source_path;
 }
