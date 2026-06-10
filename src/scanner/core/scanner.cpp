@@ -191,6 +191,10 @@ void Scanner::start(const std::string& source_path) {
             std::cout << "[guard] available memory: " << limits.avail_mem_mb
                       << " MB → safe ≤ " << limits.max_safe_by_mem << std::endl;
         }
+        if (limits.conntrack_max > 0) {
+            std::cout << "[guard] conntrack max: " << limits.conntrack_max
+                      << " → safe ≤ " << limits.max_safe_by_conntrack << std::endl;
+        }
 
         // 对外暴露 limits，方便外部脚本读取
         if (config_.max_work_count == 0) {
@@ -199,7 +203,14 @@ void Scanner::start(const std::string& source_path) {
             if (limits.max_safe_by_port > 0) {
                 safe = std::min(safe, limits.max_safe_by_port);
             }
-            if (safe == 0) safe = 20000;  // 无法检测时用保守默认值
+            if (limits.max_safe_by_conntrack > 0) {
+                safe = std::min(safe, limits.max_safe_by_conntrack);
+            }
+            if (safe == 0) {
+                std::cerr << "FATAL: Cannot detect any system limits (ports/mem/conntrack). "
+                          << "Refusing to start for safety. Set max_work_count explicitly." << std::endl;
+                std::exit(1);
+            }
             config_.max_work_count = safe;
             std::cout << "[guard] auto max_work_count=" << config_.max_work_count << std::endl;
         } else {
@@ -211,7 +222,14 @@ void Scanner::start(const std::string& source_path) {
                 if (limits.max_safe_by_port > 0) {
                     safe = std::min(safe, limits.max_safe_by_port);
                 }
-                if (safe == 0) safe = 20000;
+                if (limits.max_safe_by_conntrack > 0) {
+                    safe = std::min(safe, limits.max_safe_by_conntrack);
+                }
+                if (safe == 0) {
+                    std::cerr << "FATAL: Cannot detect any system limits to auto-cap. "
+                              << "Refusing to start." << std::endl;
+                    std::exit(1);
+                }
                 std::cerr << "[guard] Auto-capping to " << safe << std::endl;
                 config_.max_work_count = safe;
             } else {

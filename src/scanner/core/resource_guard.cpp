@@ -27,10 +27,19 @@ static uint64_t read_linux_mem_available_mb() {
     return 0;
 }
 
+static uint32_t read_linux_conntrack_max() {
+    std::ifstream f("/proc/sys/net/netfilter/nf_conntrack_max");
+    if (!f) return 0;
+    uint32_t v;
+    f >> v;
+    return v;
+}
+
 ResourceGuard::Limits ResourceGuard::probe_limits(size_t bind_ip_count) {
     Limits L;
     L.ephemeral_ports = read_linux_ephemeral_ports();
     L.avail_mem_mb    = read_linux_mem_available_mb();
+    L.conntrack_max   = read_linux_conntrack_max();
 
     size_t ip_count = bind_ip_count > 0 ? bind_ip_count : 1;
     if (L.ephemeral_ports > 0) {
@@ -40,6 +49,12 @@ ResourceGuard::Limits ResourceGuard::probe_limits(size_t bind_ip_count) {
     if (L.avail_mem_mb > 0) {
         // 每个 session 约 80KB（socket buffer + session struct + buffer）
         L.max_safe_by_mem = static_cast<size_t>(L.avail_mem_mb / 0.08);
+    }
+    if (L.conntrack_max > 0) {
+        // 每个并发连接约 4 个 conntrack 条目（SYN_SENT、ESTABLISHED、TIME_WAIT 等）
+        // 预留 1000 给 SSH/系统
+        size_t safe = (L.conntrack_max - 1000) / 4;
+        L.max_safe_by_conntrack = safe;
     }
     return L;
 }
@@ -69,6 +84,16 @@ std::string ResourceGuard::validate(size_t max_work_count, size_t bind_ip_count)
             << L.avail_mem_mb << " MB available, safe ≤ "
             << L.max_safe_by_mem << "). "
             << "Reduce max_work_count.";
+        return oss.str();
+    }
+
+    if (L.max_safe_by_conntrack > 0 && max_work_count > L.max_safe_by_conntrack) {
+        std::ostringstream oss;
+        oss << "max_work_count=" << max_work_count
+            << " exceeds conntrack table limit ("
+            << L.conntrack_max << " entries, safe ≤ "
+            << L.max_safe_by_conntrack << "). "
+            << "Reduce max_work_count or increase nf_conntrack_max.";
         return oss.str();
     }
 

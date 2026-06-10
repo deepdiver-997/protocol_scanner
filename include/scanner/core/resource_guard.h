@@ -9,10 +9,12 @@ namespace scanner {
 class ResourceGuard {
 public:
     struct Limits {
-        size_t ephemeral_ports  = 0;   // 临时端口数
-        size_t avail_mem_mb     = 0;   // 可用内存 MB
-        size_t max_safe_by_port = 0;   // 按端口的安全上限
-        size_t max_safe_by_mem  = 0;   // 按内存的安全上限
+        size_t ephemeral_ports      = 0;   // 临时端口数
+        size_t avail_mem_mb         = 0;   // 可用内存 MB
+        size_t max_safe_by_port     = 0;   // 按端口的安全上限
+        size_t max_safe_by_mem      = 0;   // 按内存的安全上限
+        size_t conntrack_max        = 0;   // 连接跟踪表上限
+        size_t max_safe_by_conntrack = 0;  // 按 conntrack 的安全上限
     };
 
     // 读取系统资源限制，用于日志输出
