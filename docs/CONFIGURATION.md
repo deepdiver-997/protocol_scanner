@@ -238,6 +238,41 @@ systemctl start ssh-heartbeat@192.3.199.163.timer
 
 ---
 
+## 可注入线程入口（分布式预留）
+
+Scanner 的输入/结果线程通过 `std::function<void()>` 回调启动，默认绑定本地文件 I/O，可通过 `set_input_producer` / `set_result_consumer` 替换为网络分发实现，无需重新编译 `scanner_core`。
+
+```cpp
+// 本地模式（默认）
+//   input 线程 → 读文件 → targets_ 队列 → scan_loop → result 线程 → 写文件
+
+// 分布式模式（伪代码）
+scanner.set_input_producer([&]() {
+    while (!done) {
+        auto task = http_get("http://master:8080/next_task");
+        scanner.push_targets_to_queue(task);
+    }
+});
+scanner.set_result_consumer([&]() {
+    while (!done) {
+        ScanReport r;
+        if (result_queue_.try_pop(r)) http_post("http://master:8080/result", r);
+    }
+});
+scanner.start("");  // 空路径，生产者自行决定数据源
+```
+
+**为何不搞文件系统抽象层**：
+
+| 场景 | 特点 | 抽象需求 |
+|------|------|---------|
+| Scanner | 任务式（start→扫完→退出），输入输出流式一次性，丢数据可重扫 | `std::function` 回调足够 |
+| SMTP/Mail 服务 | 持续运行，每封邮件必须**逐条确认落盘**才能回 250 OK | 文件系统/DB 抽象驱动 |
+
+Scanner 没有"确认后不可丢"的持久化语义——checkpoint 只加速恢复，结果丢几行无非重扫。
+
+---
+
 ## 生产部署完整流程
 
 ```bash

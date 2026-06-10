@@ -97,13 +97,23 @@ private:
     // 检查协议是否启用
     bool is_protocol_enabled(const std::string& name) const;
 
-    // 结果处理线程
+    // ====== 可注入的线程入口（默认=本地文件I/O，可通过 set_xxx 替换为分布式实现） ======
+    using InputFunc  = std::function<void()>;
+    using ResultFunc = std::function<void()>;
+
+    void set_input_producer(InputFunc fn);
+    void set_result_consumer(ResultFunc fn);
+
+    // 本地文件模式（默认实现，也暴露出去方便分布式实现复用部分逻辑）
+    void push_targets_to_queue(ScanTarget t);
+
+    // 结果处理线程（本地文件版，复杂逻辑在此）
     void result_handler_thread();
 
     // 主扫描循环
     void scan_loop();
 
-    // 输入线程函数
+    // 输入线程函数（本地文件版）
     void input_thread_func(const std::string& source_path, bool has_checkpoint);
 
     // ZMap 预过滤：快速扫描开放端口，返回过滤后的输入文件路径
@@ -166,6 +176,9 @@ private:
     std::atomic<size_t> processed_count_{0};  // 已处理（完成扫描）的目标数
     std::atomic<size_t> bind_ip_rr_{0};       // round-robin index for bind_ips
     CheckpointInfo checkpoint_info_;
+
+    InputFunc  input_producer_;   // 可注入：输入生产者（默认=从文件读取）
+    ResultFunc result_consumer_;  // 可注入：结果消费者（默认=写入文件）
 };
 
 // =====================

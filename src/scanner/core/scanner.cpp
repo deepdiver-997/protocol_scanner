@@ -62,6 +62,10 @@ Scanner::Scanner(const ScannerConfig& config)
     io_pool_ = std::make_shared<IoThreadPool>(std::max(1, io_threads));
 
     LOG_CORE_DEBUG("IO thread pool initialized: {} threads", io_threads);
+
+    // 默认线程入口：本地文件I/O
+    // start() 中根据 source_path/has_checkpoint 重新绑带参版本
+    result_consumer_ = [this]() { result_handler_thread(); };
     
     DnsResolverFactory::ResolverType rtype = DnsResolverFactory::ResolverType::C_ARES;
     const auto& rname = config_.dns_resolver_type;
@@ -175,6 +179,22 @@ std::string Scanner::preprocess_zmap(const std::string& source_path) {
         return zmap_file;
     }
     return source_path;
+}
+
+void Scanner::set_input_producer(InputFunc fn)  { input_producer_ = std::move(fn); }
+void Scanner::set_result_consumer(ResultFunc fn) { result_consumer_ = std::move(fn); }
+
+void Scanner::push_targets_to_queue(ScanTarget t) {
+    while (!stop_) {
+        {
+            std::lock_guard<SpinLock> lock(targets_lock_);
+            if (targets_.size() < config_.targets_max_size) {
+                targets_.push_back(std::move(t));
+                return;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 }
 
 void Scanner::start(const std::string& source_path) {
@@ -320,10 +340,13 @@ void Scanner::start(const std::string& source_path) {
         // deque 不需要 reserve，自动按块分配
     }
     
-    // 启动三个线程
-    input_thread_ = std::thread([this, actual_source, has_checkpoint]() {
+    // 启动三个线程：生产者/消费者通过可注入回调执行
+    //   本地模式 → 文件I/O（默认）
+    //   分布式模式 → set_input_producer / set_result_consumer 替换
+    input_producer_ = [this, actual_source, has_checkpoint]() {
         input_thread_func(actual_source, has_checkpoint);
-    });
+    };
+    input_thread_ = std::thread([this]() { input_producer_(); });
     
     // 等待 input_thread 加载至少一批 targets 再启动 scan_loop
     // 大文件（如 22GB 纯 IP）首次读取需要时间，必须等待避免 scan_loop 创建 0 个 session
@@ -348,7 +371,7 @@ void Scanner::start(const std::string& source_path) {
     std::cout << "Already have " << targets_.size() << " targets loaded, starting scan..." << std::endl;
     
     scan_thread_ = std::thread([this]() { scan_loop(); });
-    result_thread_ = std::thread([this]() { result_handler_thread(); });
+    result_thread_ = std::thread([this]() { result_consumer_(); });
 
     // 启动 metrics HTTP 服务
     metrics_start_time_ = std::chrono::steady_clock::now();
