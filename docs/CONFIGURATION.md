@@ -1,421 +1,254 @@
-# 配置说明文档
+# 配置说明
 
-## 概述
+## 快速启动
 
-协议扫描器支持通过三种方式配置线程池：
+```bash
+# 编译部署
+sudo bash deploy/setup_scanner.sh
 
-1. **JSON 配置文件**（推荐）
-2. **命令行参数**（覆盖 JSON 配置）
-3. **旧版单线程数模式**（向后兼容）
+# 启动扫描（以 SSH 为例）
+systemctl start scanner@SSH
 
----
-
-## 线程池架构
-
-```
-┌─────────────────────────────────────────────────┐
-│           Protocol Scanner                      │
-├─────────────────────────────────────────────────┤
-│  ScanThreadPool (CPU 密集型)                 │
-│  - 协议封装                                │
-│  - 任务调度                                  │
-│  - 结果收集                                  │
-│  建议配置: 2-4 线程                        │
-├─────────────────────────────────────────────────┤
-│  IoThreadPool (I/O 密集型)                   │
-│  - 网络连接                                  │
-│  - 数据读写                                  │
-│  - 超时管理                                  │
-│  建议配置: CPU 核心数 × 1.5                │
-└─────────────────────────────────────────────────┘
+# 查看状态
+systemctl status scanner@SSH
+journalctl -u scanner@SSH -f
+curl http://localhost:9080/metrics
 ```
 
 ---
 
-## 配置方式
+## 配置文件
 
-### 方式 1: JSON 配置文件（推荐）
+`config/scanner_config_prod.json`，部署时复制到 `/opt/scanner/config/scanner_config.json`。
 
-编辑 `config/scanner_config.json`：
+### scanner 主配置
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `io_thread_count` | int | 6 | IO 线程数，每个线程一个 io_context |
+| `probe_timeout_ms` | int | 3000 | 单次探测超时(ms) |
+| `dns_timeout_ms` | int | 2000 | DNS 超时(ms) |
+| `max_work_count` | int | 0 | 最大并发 session 数，0=自动计算 |
+| `only_success` | bool | true | 仅输出成功结果 |
+| `batch_size` | int | 80000 | 暂未使用 |
+| `result_batch_size` | int | 2000 | 每次写入磁盘的最大结果数 |
+| `targets_max_size` | int | 0 | 目标队列上限，0=自动(3×max_work_count) |
+| `result_queue_max_size` | int | 0 | 结果队列上限，0=自动(max_work_count/2) |
+| `metrics_port` | int | 9080 | Metrics HTTP 端口 |
+| `bind_ips` | string[] | [] | 多 IP 绑定，空=默认路由 IP |
+| `enable_zmap_filter` | bool | false | 启用 ZMap 预过滤 |
+| `zmap_port` | int | 0 | ZMap 扫描端口，0=不使用 |
+
+### protocols 配置
 
 ```json
-{
-  "scanner": {
-    "io_thread_count": 24,
-    "cpu_thread_count": 4,
-    "thread_count": 8,
-    "batch_size": 100,
-    "dns_timeout_ms": 1000,
-    "probe_timeout_ms": 2000,
-    "retry_count": 1,
-    "only_success": true,
-    "max_work_count": 100
-  }
+"protocols": {
+  "SMTP":  { "enabled": false },
+  "POP3":  { "enabled": false },
+  "IMAP":  { "enabled": false },
+  "HTTP":  { "enabled": false },
+  "FTP":   { "enabled": false },
+  "TELNET":{ "enabled": false },
+  "SSH":   { "enabled": true },
+  "REDIS": { "enabled": false },
+  "RTSP":  { "enabled": false },
+  "SIP":   { "enabled": false },
+  "MYSQL": { "enabled": false }
 }
 ```
 
-**参数说明：**
-- `io_thread_count`: IO 线程池大小，处理网络 I/O
-  - 推荐值: CPU 核心数 × 1.5
-  - 例如: 8 核 CPU → 12 线程
-- `cpu_thread_count`: CPU 线程池大小，处理协议封装等轻量任务
-  - 推荐值: 2-4 线程
-  - 不建议超过 8 线程
-- `thread_count`: 废弃参数，保留向后兼容
-- `batch_size`: 每批次任务数，建议 100-1000
-- `probe_timeout_ms`: 单次探测超时（毫秒），建议 3000-5000
-- `dns_timeout_ms`: DNS 查询超时
-- `retry_count`: 探测重试次数
-- `only_success`: 仅输出成功结果
-- `max_work_count`: 批次/工作量上限（预留防护）
+### vendor 配置
 
----
-
-### 方式 2: 命令行参数（覆盖 JSON）
-
-```bash
-# 分别指定 IO 和 CPU 线程数
-./build/scanner --domains domains.txt --scan \
-    --io-threads 12 \
-    --cpu-threads 2
-
-# 只指定 IO 线程，CPU 使用默认
-./build/scanner --domains domains.txt --scan \
-    --io-threads 8
+```json
+"vendor": {
+  "enabled": false,
+  "pattern_file": "./config/vendors.json",
+  "similarity_threshold": 0.7
+}
 ```
 
-### 输出、日志与厂商识别配置
+### dns 配置
 
-**Output**
+```json
+"dns": {
+  "resolver_type": "null",
+  "timeout_ms": 5000,
+  "max_mx_records": 16
+}
+```
+
+纯 IP 扫描建议用 `"null"`，跳过 DNS。
+
+### output 配置
+
 ```json
 "output": {
-  "format": ["text", "csv"],   // 主输出 + 附加格式
-  "write_mode": "stream",      // stream: 边扫边写；final: 扫描结束一次写
-  "directory": "./result",
+  "format": ["json"],
+  "write_mode": "stream",
+  "directory": "./output",
   "enable_json": true,
-  "enable_csv": true,
+  "enable_csv": false,
   "enable_report": false,
   "to_console": false
 }
 ```
 
-**Logging**
-```json
-"logging": {
-  "level": "INFO",
-  "console_enabled": false,
-  "file_enabled": false,
-  "file_path": "./scanner.log"
-}
-```
-
-**Vendor**
-```json
-"vendor": {
-  "enabled": true,
-  "pattern_file": "./config/vendors.json",  // 可通过 --vendor-file 覆盖
-  "similarity_threshold": 0.7
-}
-```
-
 ---
 
-### 方式 3: 旧版单线程数模式（向后兼容）
+## ResourceGuard 资源守护
+
+启动时自动检测系统限制，防止 scanner 打满端口或 conntrack 表导致 SSH 断连。
+
+### 检测项目
+
+| 资源 | 数据源 | 安全上限计算 |
+|------|--------|------------|
+| 临时端口 | `/proc/sys/net/ipv4/ip_local_port_range` | `ports × 0.75 × bind_ips数量` |
+| 可用内存 | `sysinfo()` | `内存MB / 0.08` |
+| Conntrack | `/proc/sys/net/netfilter/nf_conntrack_max` | `(conntrack_max - 1000) / 4` |
+
+### 行为
+
+- `max_work_count=0`：取三者最小值自动设置
+- `max_work_count>0`：显式值，超限自动 cap（打印 WARNING），不拒绝启动
+- 三项全部无法检测（非 Linux）：**拒绝启动**，必须显式设 `max_work_count`
+
+### 扩大 conntrack
 
 ```bash
-# 使用旧版 --threads 参数（同时设置 IO 和 CPU 线程）
-./build/scanner --domains domains.txt --scan --threads 8
-
-# 实际效果:
-#   io_thread_count = 8
-#   cpu_thread_count = max(1, 8 / 4) = 2
+echo 'net.netfilter.nf_conntrack_max = 524288' >> /etc/sysctl.d/99-scanner.conf
+sysctl -p /etc/sysctl.d/99-scanner.conf
 ```
 
 ---
 
-## 推荐配置
+## 多 IP 绑定
 
-### 小规模扫描（< 100 域名）
+每个 IP 有独立的临时端口池，两 IP 翻倍并发上限。Scanner 内 Round-Robin 分配。
+
+```json
+"bind_ips": ["192.3.199.159", "192.3.199.163"]
+```
+
+---
+
+## ZMap 预过滤
+
+先用 ZMap 快速扫端口，只对开放的 IP 做精细指纹识别。
+
+### 前提
+
+```bash
+sudo apt install zmap
+```
+
+### 配置
+
+```json
+"enable_zmap_filter": true,
+"zmap_port": 22
+```
+
+### 行为
+
+1. 检查 `<output_dir>/zmap_port<port>.txt` 是否存在
+2. 不存在 → `system("zmap -p <port> -r 100000 ...")` → 写入 `.tmp` → 成功后 rename
+3. 存在 → 直接用作输入
+
+### 速率参考（1.6B IP，单端口）
+
+| pps | 耗时 |
+|-----|------|
+| 100K (默认) | ~4.4h |
+| 500K | ~53min |
+| 1M | ~27min |
+
+---
+
+## Metrics 监控
+
+```bash
+curl http://localhost:9080/metrics
+```
 
 ```json
 {
-  "scanner": {
-    "io_thread_count": 4,
-    "cpu_thread_count": 2,
-    "batch_size": 100,
-    "probe_timeout_ms": 3000,
-    "only_success": true
-  }
+  "queues":    {"targets": 60000, "results": 0,  "pending": 0},
+  "io_pool":   [3333, 3333, 3333, 3333, 3334, 3333],
+  "sessions":  {"active": 20000, "total": 20000},
+  "progress":  {"processed": 12703817, "successful": 223528},
+  "rate":      {"targets_per_sec": 6479},
+  "uptime_sec": 422,
+  "protocols": {"SSH": 246541}
 }
 ```
 
-### 中等规模（100 - 10,000 域名）
-
-```json
-{
-  "scanner": {
-    "io_thread_count": 12,
-    "cpu_thread_count": 2,
-    "batch_size": 500,
-    "probe_timeout_ms": 3000,
-    "only_success": true
-  }
-}
-```
-
-### 大规模扫描（> 10,000 域名）
-
-```json
-{
-  "scanner": {
-    "io_thread_count": 24,
-    "cpu_thread_count": 4,
-    "batch_size": 1000,
-    "probe_timeout_ms": 5000,
-    "only_success": true
-  }
-}
-```
+- `queues.pending`：已产出但等待 seq 排序提交的结果数（高值可能表示 stall）
+- `io_pool`：每个 IO 线程当前负载（约等于 max_work_count / io_thread_count）
+- `rate`：每秒处理的目标数
 
 ---
 
-## 性能调优指南
+## 死绳开关 (Dead-man Switch)
 
-### 1. 如何确定最佳 IO 线程数
+防止 scanner 耗尽 conntrack/端口后 SSH 断连无法恢复。由外部心跳 + 本地 watchdog 组成。
+
+### 架构
+
+```
+阿里云 ──(SSH 心跳, 每30s touch 文件)──→ 美国服务器
+                                            │
+                                     watchdog 每 60s 检查
+                                     /tmp/aliyun_heartbeat
+                                     超过 120s 未更新
+                                            │
+                                     systemctl stop scanner@*
+```
+
+### 阿里云端
 
 ```bash
-# 查看 CPU 核心数
-sysctl -n hw.ncpu  # macOS
-lscpu | grep "CPU(s)"  # Linux
-
-# IO 线程数 = CPU 核心数 × 1.5
-# 8 核 CPU → 12 个 IO 线程
+cp deploy/ssh-heartbeat@.* /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now ssh-heartbeat@192.3.199.163.timer
 ```
 
-**原因：**
-- 网络等待期间 CPU 可以处理其他连接
-- 1.5 倍因子在测试中表现最佳
-- 过多线程会导致上下文切换开销
-
-### 2. 如何确定最佳 CPU 线程数
+### 美国服务器端（部署脚本自动安装）
 
 ```bash
-# 固定值: 2-4 线程
-# CPU 线程只处理轻量任务（协议封装），不需要太多
+# 手动安装
+cp deploy/scanner-watchdog.* /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now scanner-watchdog.timer
 ```
 
-**原因：**
-- ScanThreadPool 只是包装器，实际 I/O 在 IoThreadPool
-- 协议解析（字符串处理）非常快（< 0.1ms）
-- 过多线程造成资源浪费
-
-### 3. 调整 batch_size
+### 测试
 
 ```bash
-# batch_size = io_thread_count × 预期并发连接数
-# 示例: 12 IO 线程 × 100 并发连接 = 1200 batch_size
+# 1. 阿里云停心跳
+systemctl stop ssh-heartbeat@192.3.199.163.timer
+
+# 2. 2 分钟后美国服务器确认 scanner 被杀
+journalctl -u scanner-watchdog.service -f
+# 预期: FATAL: Heartbeat stale (XXXs > 120s), stopping all scanners
+
+# 3. 恢复心跳
+systemctl start ssh-heartbeat@192.3.199.163.timer
 ```
 
-**注意事项：**
-- 过大会增加内存占用
-- 过小会降低吞吐量
-- 建议从 100 开始，逐步增加
+---
 
-### 4. 调整 probe_timeout_ms
+## 生产部署完整流程
 
 ```bash
-# 超时设置影响:
-#   - 太短: 慢速服务器被误判为失败
-#   - 太长: 浪费时间等待响应
-# 推荐值: 3000-5000ms
+# 美国服务器
+cd ~/protocol_scanner && git pull
+rm -rf build
+sudo bash deploy/setup_scanner.sh
+
+# 手动调配置（如需要）
+vim /opt/scanner/config/scanner_config.json
+
+# 启动
+systemctl start scanner@SSH
 ```
-
-**生效规则（分协议超时）**
-- 每次协议探测的实际超时 = `max(协议默认超时, 全局/动态超时)`。
-- 示例：`SMTP` 默认 5000ms，若全局为 3000ms，则使用 5000ms；若全局为 6000ms，则使用 6000ms。
-- 若将全局设置为 `0`（动态），则仍不低于协议默认值。
-
----
-
-## 故障排查
-
-### 问题 1: 扫描速度慢
-
-**症状：** 扫描 1000 域名需要 > 10 分钟
-
-**解决方案：**
-```bash
-# 增加 IO 线程数
-./build/scanner --domains domains.txt --scan --io-threads 24
-
-# 检查是否有瓶颈
-# 查看日志中的连接成功率
-```
-
-### 问题 2: 内存占用过高
-
-**症状：** 内存占用 > 2GB
-
-**解决方案：**
-```json
-{
-  "scanner": {
-    "batch_size": 100,  // 减少 batch_size
-    "io_thread_count": 8   // 减少 IO 线程数
-  }
-}
-```
-
-### 问题 3: 误报率高
-
-**症状：** 大量连接超时
-
-**解决方案：**
-```json
-{
-  "scanner": {
-    "probe_timeout_ms": 5000  // 增加超时时间
-  }
-}
-```
-
----
-
-## 配置优先级
-
-1. **命令行参数**（最高优先级）
-   - `--io-threads`
-   - `--cpu-threads`
-   - `--threads`（旧版）
-
-2. **JSON 配置文件**
-   - `config/scanner_config.json`
-
-3. **代码默认值**（最低优先级）
-   - `io_thread_count = 4`
-   - `cpu_thread_count = 2`
-
----
-
-## 监控和日志
-
-查看线程池使用情况：
-
-```bash
-# 启动扫描，观察日志
-./build/scanner --domains domains.txt --scan
-
-# 日志输出:
-# [info] Thread pools: IO=12, CPU=2
-# [info] Thread pools initialized: IO=12 CPU=2
-# [info] Scan completed in 15 seconds
-```
-
----
-
-## DNS 优化配置
-
-### 自动 IP 地址检测
-
-扫描器会自动检测输入中的有效 IPv4 地址，**跳过 DNS 解析**，直接进行协议探测：
-
-```json
-{
-  "dns": {
-    "resolver_type": "cares",
-    "timeout_ms": 5000,
-    "max_mx_records": 16
-  }
-}
-```
-
-**工作原理**：
-
-1. **输入**：`192.168.1.1` → 检测为 IP 地址
-2. **跳过** DNS 查询
-3. **直接** 进行协议探测（SMTP、HTTP 等）
-
-相比于域名输入节省了 DNS 查询时间（通常 100-500ms）。
-
-### 大规模扫描优化
-
-对于 1M+ 规模的 IP 列表扫描：
-
-```json
-{
-  "scanner": {
-    "targets_max_size": 1000000,      // 最大目标队列大小
-    "batch_size": 100,                 // 单次批处理数量
-    "thread_count": 8                  // CPU 线程数
-  }
-}
-```
-
-**特性**：
-
-- **生产者-消费者模式**：输入线程异步加载，扫描线程异步探测
-- **背压机制**：当 targets 队列达到 `targets_max_size` 时，输入线程暂停
-- **结果缓冲**：结果线程定期（每 5 秒）将完成的报告写入磁盘
-
-这种设计避免了一次性加载所有目标到内存的问题。
-
----
-
-## 输入文件格式
-
-### 支持的输入格式
-
-#### 1. 域名列表（每行一个）
-
-```
-gmail.com
-outlook.com
-baidu.com
-```
-
-#### 2. IP 地址列表（自动检测，无需 DNS）
-
-```
-8.8.8.8
-114.114.114.114
-1.1.1.1
-```
-
-#### 3. IP 范围（CSV 格式：start_ip,end_ip）
-
-```
-192.168.1.0,192.168.1.255
-10.0.0.0,10.0.0.10
-172.16.0.0,172.16.0.255
-```
-
-**自动扩展范围**，上限 1M 条 IP（防止内存爆炸）
-
-#### 4. 混合格式（域名 + IP）
-
-```
-# 注释行（以 # 或 ; 开头）
-gmail.com
-8.8.8.8
-
-baidu.com
-114.114.114.114
-```
-
-### 最佳实践
-
-- **预先解析 IP**：使用 IP 地址而非域名可节省 DNS 时间
-- **使用 IP 范围**：对于 CIDR 块可用 CSV 格式自动扩展
-- **注释行**：以 `#` 或 `;` 开头的行会被自动忽略
-- **空行处理**：自动跳过空行和仅有空白的行
-
----
-
-## 向后兼容性
-
-| 旧版命令 | 新版等效命令 | 说明 |
-|----------|------------|------|
-| `--threads 8` | `--io-threads 8 --cpu-threads 2` | 自动分配 IO=8, CPU=2 |
-| `--threads 4` | `--io-threads 4 --cpu-threads 1` | 自动分配 IO=4, CPU=1 |
-
-**注意：** 旧版 `--threads` 参数仍可使用，但推荐迁移到新版参数。

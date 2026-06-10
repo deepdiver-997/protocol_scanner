@@ -162,7 +162,7 @@ std::string Scanner::preprocess_zmap(const std::string& source_path) {
         int ret = std::system(cmd.c_str());
         if (ret != 0 || !fs::exists(tmp_file)) {
             std::cerr << "[zmap] zmap failed (exit " << ret << "), falling back to raw input" << std::endl;
-            fs::remove(tmp_file, std::error_code{});
+            ::unlink(tmp_file.c_str());
             return source_path;
         }
         fs::rename(tmp_file, zmap_file);
