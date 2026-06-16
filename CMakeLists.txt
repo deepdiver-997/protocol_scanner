@@ -178,6 +178,7 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/core/progress_manager.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/utils.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/scanner.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/core/mcp_mode.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/vendor/vendor_detector.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/output/result_handler.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/distributed_queue.cpp

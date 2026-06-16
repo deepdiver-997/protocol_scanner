@@ -3,6 +3,7 @@
 #include "scanner/protocols/protocol_base.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/thread_pool.h"
+#include "scanner/common/io_thread_pool.h"
 #include <boost/asio.hpp>
 #include <memory>
 #include <vector>
@@ -41,10 +42,9 @@ public:
     bool idle() const { return tasks_total_.load(std::memory_order_relaxed) == 0; }
     bool ready_to_release() const {
         if (target_.ip_uint == 0 && !target_.domain.empty()) return true;
-        if (tasks_total() == 0) return true;
-        return tasks_completed() >= tasks_total();
+        return tasks_completed() >= initial_total;
     }
-    int io_context_idx() const { return io_context_idx_; }
+    // int io_context_idx() const { return io_context_idx_; }
     void set_io_context_idx(int idx) { io_context_idx_ = idx; }
     std::size_t tasks_total() const { return tasks_total_.load(std::memory_order_relaxed); }
     std::size_t tasks_completed() const { return tasks_completed_.load(std::memory_order_relaxed); }
@@ -65,7 +65,7 @@ public:
     // ====== 启动探测 ======
     int start_all_pending_probes(
         const std::vector<std::unique_ptr<IProtocol>>& protocols,
-        const boost::asio::any_io_executor& exec,
+        IoThreadPool* io_pool_,
         Timeout timeout,
         int quota = INT_MAX,
         const std::string& bind_ip = ""
@@ -91,6 +91,7 @@ private:
     std::mutex results_mutex_;
 
     std::atomic<std::size_t> tasks_total_{0};
+    std::size_t initial_total;
     std::atomic<std::size_t> tasks_completed_{0};
     std::atomic<uint64_t> generation_{0};
     int io_context_idx_{-1};

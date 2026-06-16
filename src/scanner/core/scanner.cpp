@@ -943,9 +943,21 @@ void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
     auto last_mem_log = std::chrono::steady_clock::now();
 
-    int max_sessions = config_.max_work_count > 0
+    // 计算每个 session 最多占用几个端口（用于 session 数 vs 连接数的换算）
+    int ports_per_session = 0;
+    for (const auto& p : protocols_) {
+        if (p) ports_per_session += static_cast<int>(p->default_ports().size());
+    }
+    if (ports_per_session == 0) ports_per_session = 1;
+
+    // max_work_count 是连接数上限，除以每 session 端口数得到 session 数上限
+    int work_count = config_.max_work_count > 0
         ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
+    int max_sessions = std::max(1, work_count / ports_per_session);
     sessions_.reserve(max_sessions);
+
+    std::cout << "[scan_loop] ports_per_session=" << ports_per_session
+              << " max_work=" << work_count << " max_sessions=" << max_sessions << std::endl;
 
     auto fetch_one_target = [this](ScanTarget& out) -> bool {
         std::lock_guard<SpinLock> lock(targets_lock_);
@@ -961,6 +973,15 @@ void Scanner::scan_loop() {
         return config_.bind_ips[idx];
     };
 
+    auto cal_quota = [this]() -> int {
+        // 基于 io_pool 实时负载计算可启动的 probe 数（每个 probe = 1 个临时端口）
+        auto loads = io_pool_->io_loads();
+        size_t total = 0;
+        for (auto l : loads) total += l;
+        if (total >= config_.max_work_count) return 0;
+        return static_cast<int>(config_.max_work_count - total);
+    };
+
     // 一次性创建所有 session（start() 已等待 targets 就绪，这里必能取到）
     for (int i = 0; i < max_sessions; ++i) {
         ScanTarget t;
@@ -971,10 +992,11 @@ void Scanner::scan_loop() {
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                    : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_);
-        int ctx_idx = io_pool_->acquire_context();
-        sess->set_io_context_idx(ctx_idx);
-        sess->start_all_pending_probes(protocols_,
-            io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1, next_bind_ip());
+        // 这里只创建，启动逻辑统一放到后面的循环
+        // int ctx_idx = io_pool_->acquire_context();
+        // sess->set_io_context_idx(ctx_idx);
+        // sess->start_all_pending_probes(protocols_,
+        //     io_pool_.get(), config_.probe_timeout, INT_MAX, next_bind_ip());
         sessions_.push_back(std::move(sess));
     }
     std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
@@ -988,30 +1010,36 @@ void Scanner::scan_loop() {
         }
 
         int active_sessions = 0;
+        int total_quota = cal_quota();
 
         // 遍历所有 session，完成的就取新 target 重用
         for (auto& s : sessions_) {
-            if (!s || s->idle()) continue;
+            if (total_quota <= 0) break;
+            if (!s || s->idle() && !s->ready_to_release()) { active_sessions++; continue; }    // 任务发完了但是还有的没结束
             active_sessions++;
-
-            if (s->ready_to_release()) {
-                // 释放旧 context 负载
-                io_pool_->release_context(s->io_context_idx());
-                ScanTarget t;
+            
+            ScanTarget t;
+            if (s->ready_to_release())
                 if (fetch_one_target(t)) {
-                    int ctx_idx = io_pool_->acquire_context();
-                    s->set_io_context_idx(ctx_idx);
-                    s->reset(std::move(t),
-                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
-                                               : ScanSession::ProbeMode::ProtocolDefaults,
-                        protocols_);
-                    s->start_all_pending_probes(protocols_,
-                        io_pool_->executor_for(ctx_idx), config_.probe_timeout, 1, next_bind_ip());
+                // int ctx_idx = io_pool_->acquire_context();
+                // s->set_io_context_idx(ctx_idx);
+                s->reset(std::move(t),
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                            : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_);
                 } else {
                     // 队列空，保持 ready_to_release 状态等下一轮
                     active_sessions--;
                 }
-            }
+            
+            int launched = 0;
+            do {
+                // 释放旧 context 负载
+                // io_pool_->release_context(s->io_context_idx());  // 让回调结束去释放
+                launched = s->start_all_pending_probes(protocols_,
+                    io_pool_.get(), config_.probe_timeout, 1, next_bind_ip());
+                total_quota -= launched;
+            } while (launched);
         }
 
         if (input_done_ && targets_.empty() && active_sessions == 0) {
@@ -1093,7 +1121,7 @@ std::vector<ScanReport> Scanner::scan_domains(const std::vector<std::string>& do
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_
         );
-        session->start_all_pending_probes(protocols_, io_exec, config_.probe_timeout, 10);
+        session->start_all_pending_probes(protocols_, io_pool_.get(), config_.probe_timeout, 10);
         // Wait...
         for (int i = 0; i < 100 && !session->ready_to_release(); i++) {
             std::this_thread::sleep_for(std::chrono::milliseconds(100));

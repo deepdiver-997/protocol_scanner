@@ -82,6 +82,7 @@ void ScanSession::reset(const ScanTarget& new_target, ProbeMode mode,
         }
     }
     tasks_total_.store(total, std::memory_order_relaxed);
+    initial_total = total;
 }
 
 void ScanSession::reset(ScanTarget&& new_target, ProbeMode mode,
@@ -129,7 +130,7 @@ bool ScanSession::should_probe(const IProtocol& proto, Port port) const {
 
 int ScanSession::start_all_pending_probes(
     const std::vector<std::unique_ptr<IProtocol>>& protocols,
-    const boost::asio::any_io_executor& exec,
+    IoThreadPool* io_pool_,
     Timeout timeout,
     int quota,
     const std::string& bind_ip
@@ -173,9 +174,11 @@ int ScanSession::start_all_pending_probes(
         Timeout proto_default = proto_ptr->default_timeout();
         if (proto_default > effective) effective = proto_default;
 
+        int ctx_id = io_pool_->acquire_context();
         proto_ptr->async_probe(
-            target_name, ip, chosen_port, effective, exec,
-            [this, proto_name = chosen_proto, grq, gen](ProtocolResult&& r) {
+            target_name, ip, chosen_port, effective, io_pool_->executor_for(ctx_id),
+            [this, proto_name = chosen_proto, grq, gen, io_pool_, ctx_id](ProtocolResult&& r) {
+                io_pool_->release_context(ctx_id);
                 if (generation_.load(std::memory_order_acquire) != gen) return;
 
                 {
@@ -188,7 +191,7 @@ int ScanSession::start_all_pending_probes(
                 // target_（含 std::string），导致 double-free。
                 ScanTarget target_snapshot = target_;
                 bool is_last = (tasks_completed_.fetch_add(1, std::memory_order_acq_rel) + 1
-                                >= tasks_total_.load(std::memory_order_acquire));
+                                >= initial_total);
                 if (is_last) {
                     ScanReport rep;
                     rep.target = std::move(target_snapshot);
@@ -202,6 +205,7 @@ int ScanSession::start_all_pending_probes(
             },
             bind_ip
         );
+        tasks_total_.fetch_sub(1, std::memory_order_relaxed);
         ++launched;
     }
     return launched;

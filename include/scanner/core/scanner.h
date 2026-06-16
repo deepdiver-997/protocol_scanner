@@ -72,6 +72,17 @@ public:
     // 获取配置
     const ScannerConfig& config() const { return config_; }
 
+    // ====== 可注入的线程入口（默认=本地文件I/O，可通过 set_xxx 替换为分布式实现） ======
+    using InputFunc  = std::function<void()>;
+    using ResultFunc = std::function<void()>;
+
+    void set_input_producer(InputFunc fn);
+    void set_result_consumer(ResultFunc fn);
+
+    // 本地文件模式（默认实现，也暴露出去方便分布式实现复用部分逻辑）
+    void push_targets_to_queue(ScanTarget t);
+    BlockingQueue<ScanReport>& result_queue() { return result_queue_; }
+
     // 获取统计信息
     struct ScanStatistics {
         size_t total_targets = 0;           // 总目标数
@@ -96,16 +107,6 @@ private:
 
     // 检查协议是否启用
     bool is_protocol_enabled(const std::string& name) const;
-
-    // ====== 可注入的线程入口（默认=本地文件I/O，可通过 set_xxx 替换为分布式实现） ======
-    using InputFunc  = std::function<void()>;
-    using ResultFunc = std::function<void()>;
-
-    void set_input_producer(InputFunc fn);
-    void set_result_consumer(ResultFunc fn);
-
-    // 本地文件模式（默认实现，也暴露出去方便分布式实现复用部分逻辑）
-    void push_targets_to_queue(ScanTarget t);
 
     // 结果处理线程（本地文件版，复杂逻辑在此）
     void result_handler_thread();

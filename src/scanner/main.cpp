@@ -1,6 +1,7 @@
 // #include "scanner/core/scanner.h"  // TODO: 实现 scanner.cpp 后启用
 // #include "scanner/vendor/vendor_detector.h"  // TODO: 实现 vendor_detector.cpp 后启用
 #include "scanner/core/scanner.h"
+#include "scanner/core/mcp_mode.h"
 #include "scanner/core/crash_inspector.h"
 #include "scanner/dns/dns_resolver.h"
 #include "scanner/common/logger.h"
@@ -386,6 +387,8 @@ int main(int argc, char* argv[]) {
             ("domains,d", po::value<string>(), "Input file containing domain names")
             ("dns-test", "Run DNS resolution test mode (temporary)")
             ("scan", "Run protocol scan and print results to stdout")
+            ("mcp", "Start MCP TCP server for on-demand single-IP scanning")
+            ("mcp-port", po::value<uint16_t>()->default_value(9081), "MCP server TCP port (default: 9081)")
             ("output,o", po::value<string>(), "Output directory (default: ./result)")
             ("threads,t", po::value<int>()->default_value(4), "Number of threads (deprecated, use --io-threads)")
             ("io-threads", po::value<int>(), "IO thread pool size (network I/O)")
@@ -433,8 +436,8 @@ int main(int argc, char* argv[]) {
         }
 
         // 检查必需参数
-        if (!vm.count("domains")) {
-            cerr << "Error: --domains option is required" << endl;
+        if (!vm.count("domains") && !vm.count("mcp")) {
+            cerr << "Error: --domains option is required (or use --mcp)" << endl;
             cerr << "Use --help for usage information" << endl;
             return 1;
         }
@@ -618,6 +621,35 @@ int main(int argc, char* argv[]) {
             scanner::Logger::get_instance().set_level(spdlog::level::err);
         } else {
             scanner::Logger::get_instance().set_level(spdlog::level::info);
+        }
+
+        // ---- MCP 模式：TCP 服务端，按需单 IP 扫描 ----
+        if (vm.count("mcp")) {
+            if (!config.has_any_protocol_enabled()) {
+                std::cerr << "FATAL: No protocol enabled for MCP mode." << std::endl;
+                return 1;
+            }
+
+            check_system_limits(config);
+            Scanner scanner(config);
+
+            uint16_t mcp_port = vm["mcp-port"].as<uint16_t>();
+            size_t num_slots = config.max_work_count > 0 ? config.max_work_count : 20000;
+
+            MCPContext mcp(mcp_port, num_slots);
+            scanner.set_input_producer(mcp.make_input_producer(&scanner));
+            scanner.set_result_consumer(mcp.make_result_consumer(&scanner));
+
+            std::cout << "[mcp] TCP server on port " << mcp_port
+                      << " with " << num_slots << " slots" << std::endl
+                      << "[mcp] Usage: echo '{\"target\":\"1.2.3.4\"}' | nc localhost "
+                      << mcp_port << std::endl
+                      << "[mcp]        echo '{\"get\":0}' | nc localhost "
+                      << mcp_port << std::endl;
+
+            scanner.start("");
+            scanner.get_results(std::chrono::milliseconds(-1));
+            return 0;
         }
 
         // 【关键修复】不要提前加载所有域名到内存！！！
