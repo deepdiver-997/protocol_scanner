@@ -1024,7 +1024,7 @@ void Scanner::scan_loop() {
         // 遍历所有 session，完成的就取新 target 重用
         for (auto& s : sessions_) {
             if (total_quota <= 0) break;
-            if (!s || s->idle() && !s->ready_to_release()) { active_sessions++; continue; }    // 任务发完了但是还有的没结束
+            if (!s || (s->idle() && !s->ready_to_release())) { active_sessions++; continue; }
             active_sessions++;
             
             ScanTarget t;

@@ -61,36 +61,35 @@ std::string MCPContext::handle_request(const std::string& json_line, Scanner* sc
         // ---- target 提交新扫描任务 ----
         if (req.contains("target")) {
             // 线性扫描找空闲槽位
-            auto get_free = [this, &req, scanner] (size_t start_) -> size_t {
+            size_t slot_idx = num_slots_;
+            auto get_free = [this, &req, scanner, &slot_idx] (size_t start_) {
                 for (size_t i = start_; i < num_slots_; ++i) {
                     int expected = 0;
                     if (slots_[i].status.compare_exchange_strong(expected, 1, std::memory_order_acq_rel)) {
                         slots_[i].target_ip = req["target"].get<std::string>();
-                        slots_[i].seq = i;  // seq = slot index，结果回填时 O(1) 定位
-    
-                        // 构造 ScanTarget 并推入生产队列
+                        slots_[i].seq = i;
                         ScanTarget t;
                         t.set_ip(slots_[i].target_ip);
                         t.seq = i;
                         scanner->push_targets_to_queue(std::move(t));
-                        return i;
+                        slot_idx = i;
+                        return true;
                     }
                 }
-                return -1;
+                return false;
             };
-            size_t i = get_free(this->last_stop_);
-            if (i == -1) {
-                for (int j = 0;j < 3;++j) {
-                    i = get_free(0);
-                    if (i != -1) break;
+            bool found = get_free(this->last_stop_);
+            if (!found) {
+                for (int j = 0; j < 3; ++j) {
+                    if (get_free(0)) { found = true; break; }
                 }
             }
-            if (i != -1) {
-                last_stop_ = i;
+            if (found) {
+                last_stop_ = slot_idx;
                 nlohmann::json resp;
-                resp["slot"] = i;
-                resp["seq"] = i;
-                resp["target"] = slots_[i].target_ip;
+                resp["slot"] = slot_idx;
+                resp["seq"] = slot_idx;
+                resp["target"] = slots_[slot_idx].target_ip;
                 return resp.dump() + "\n";
             }
             return "{\"error\":\"no free slots\"}\n";
