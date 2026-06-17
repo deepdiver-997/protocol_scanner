@@ -8,6 +8,97 @@ namespace scanner {
 // -------------- 内部辅助 --------------
 
 static inline const char* bool_str(bool v) { return v ? "1" : "0"; }
+static std::string sanitize_utf8(const std::string& input);
+
+// -------------- 构造函数 --------------
+
+ResultHandler::ResultHandler() {
+    using json = nlohmann::json;
+
+    attr_writers_["SMTP"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["pipelining"] = pr.attrs.smtp.pipelining;
+        a["starttls"] = pr.attrs.smtp.starttls;
+        a["size_supported"] = pr.attrs.smtp.size_supported;
+        a["size_limit"] = pr.attrs.smtp.size_limit;
+        a["utf8"] = pr.attrs.smtp.utf8;
+        a["8bitmime"] = pr.attrs.smtp._8bitmime;
+        a["dsn"] = pr.attrs.smtp.dsn;
+        a["auth_methods"] = sanitize_utf8(pr.attrs.smtp.auth_methods);
+        jp["smtp"] = a;
+    };
+    attr_writers_["POP3"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["stls"] = pr.attrs.pop3.stls;
+        a["sasl"] = pr.attrs.pop3.sasl;
+        a["user"] = pr.attrs.pop3.user;
+        a["top"] = pr.attrs.pop3.top;
+        a["pipelining"] = pr.attrs.pop3.pipelining;
+        a["uidl"] = pr.attrs.pop3.uidl;
+        a["capabilities"] = sanitize_utf8(pr.attrs.pop3.capabilities);
+        jp["pop3"] = a;
+    };
+    attr_writers_["IMAP"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["starttls"] = pr.attrs.imap.starttls;
+        a["quota"] = pr.attrs.imap.quota;
+        a["acl"] = pr.attrs.imap.acl;
+        a["imap4rev1"] = pr.attrs.imap.imap4rev1;
+        a["auth_plain"] = pr.attrs.imap.auth_plain;
+        a["auth_login"] = pr.attrs.imap.auth_login;
+        a["idle"] = pr.attrs.imap.idle;
+        a["unselect"] = pr.attrs.imap.unselect;
+        a["uidplus"] = pr.attrs.imap.uidplus;
+        a["capabilities"] = sanitize_utf8(pr.attrs.imap.capabilities);
+        jp["imap"] = a;
+    };
+    attr_writers_["HTTP"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["server"] = sanitize_utf8(pr.attrs.http.server);
+        a["content_type"] = sanitize_utf8(pr.attrs.http.content_type);
+        a["status_code"] = pr.attrs.http.status_code;
+        jp["http"] = a;
+    };
+    attr_writers_["MYSQL"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["version"] = sanitize_utf8(pr.attrs.mysql.version);
+        a["protocol_version"] = pr.attrs.mysql.protocol_version;
+        a["auth_plugin"] = sanitize_utf8(pr.attrs.mysql.auth_plugin);
+        a["capability_flags"] = pr.attrs.mysql.capability_flags;
+        jp["mysql"] = a;
+    };
+    attr_writers_["SSH"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["version_string"] = sanitize_utf8(pr.attrs.ssh.version_string);
+        a["software"] = sanitize_utf8(pr.attrs.ssh.software);
+        a["version"] = sanitize_utf8(pr.attrs.ssh.version);
+        a["protocol_version"] = sanitize_utf8(pr.attrs.ssh.protocol_version);
+        jp["ssh"] = a;
+    };
+    attr_writers_["FTP"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["features"] = sanitize_utf8(pr.attrs.ftp.features);
+        a["utf8"] = pr.attrs.ftp.utf8;
+        a["auth_tls"] = pr.attrs.ftp.auth_tls;
+        a["auth_ssl"] = pr.attrs.ftp.auth_ssl;
+        a["size_cmd"] = pr.attrs.ftp.size_cmd;
+        a["mdtm"] = pr.attrs.ftp.mdtm;
+        a["mldst"] = pr.attrs.ftp.mldst;
+        a["tvfs"] = pr.attrs.ftp.tvfs;
+        a["xcrc"] = pr.attrs.ftp.xcrc;
+        a["xcup"] = pr.attrs.ftp.xcup;
+        jp["ftp"] = a;
+    };
+    // 以下协议无专用结构体，仅需占位通过启动校验
+    attr_writers_["TELNET"] = [](json&, const ProtocolResult&) {};
+    attr_writers_["REDIS"] = [](json&, const ProtocolResult&) {};
+    attr_writers_["RTSP"]  = [](json&, const ProtocolResult&) {};
+    attr_writers_["SIP"]   = [](json&, const ProtocolResult&) {};
+}
+
+bool ResultHandler::has_protocol_formatter(const std::string& name) const {
+    return attr_writers_.find(name) != attr_writers_.end();
+}
 
 // Replace invalid UTF-8 byte sequences with '?' to keep JSON serialization robust.
 static std::string sanitize_utf8(const std::string& input) {
@@ -292,53 +383,10 @@ std::string ResultHandler::to_json(const ScanReport& report) const {
         jp["banner"] = sanitize_utf8(pr.attrs.banner);
         jp["vendor"] = sanitize_utf8(pr.attrs.vendor);
         jp["response_time_ms"] = pr.attrs.response_time_ms;
-        // SMTP attrs
-        if (pr.protocol == "SMTP") {
-            nlohmann::json a;
-            a["pipelining"] = pr.attrs.smtp.pipelining;
-            a["starttls"] = pr.attrs.smtp.starttls;
-            a["size_supported"] = pr.attrs.smtp.size_supported;
-            a["size_limit"] = pr.attrs.smtp.size_limit;
-            a["utf8"] = pr.attrs.smtp.utf8;
-            a["8bitmime"] = pr.attrs.smtp._8bitmime;
-            a["dsn"] = pr.attrs.smtp.dsn;
-            a["auth_methods"] = sanitize_utf8(pr.attrs.smtp.auth_methods);
-            jp["smtp"] = a;
-        }
-        // POP3
-        if (pr.protocol == "POP3") {
-            nlohmann::json a;
-            a["stls"] = pr.attrs.pop3.stls;
-            a["sasl"] = pr.attrs.pop3.sasl;
-            a["user"] = pr.attrs.pop3.user;
-            a["top"] = pr.attrs.pop3.top;
-            a["pipelining"] = pr.attrs.pop3.pipelining;
-            a["uidl"] = pr.attrs.pop3.uidl;
-            a["capabilities"] = sanitize_utf8(pr.attrs.pop3.capabilities);
-            jp["pop3"] = a;
-        }
-        // IMAP
-        if (pr.protocol == "IMAP") {
-            nlohmann::json a;
-            a["starttls"] = pr.attrs.imap.starttls;
-            a["quota"] = pr.attrs.imap.quota;
-            a["acl"] = pr.attrs.imap.acl;
-            a["imap4rev1"] = pr.attrs.imap.imap4rev1;
-            a["auth_plain"] = pr.attrs.imap.auth_plain;
-            a["auth_login"] = pr.attrs.imap.auth_login;
-            a["idle"] = pr.attrs.imap.idle;
-            a["unselect"] = pr.attrs.imap.unselect;
-            a["uidplus"] = pr.attrs.imap.uidplus;
-            a["capabilities"] = sanitize_utf8(pr.attrs.imap.capabilities);
-            jp["imap"] = a;
-        }
-        // HTTP
-        if (pr.protocol == "HTTP") {
-            nlohmann::json a;
-            a["server"] = sanitize_utf8(pr.attrs.http.server);
-            a["content_type"] = sanitize_utf8(pr.attrs.http.content_type);
-            a["status_code"] = pr.attrs.http.status_code;
-            jp["http"] = a;
+        // 协议专用属性通过注册的 formatter 输出
+        auto it = attr_writers_.find(pr.protocol);
+        if (it != attr_writers_.end()) {
+            it->second(jp, pr);
         }
         j["protocols"].push_back(jp);
     }

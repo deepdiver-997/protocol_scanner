@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../protocols/protocol_base.h"
+#include <nlohmann/json.hpp>
 #include <string>
 #include <vector>
 #include <memory>
@@ -29,7 +30,7 @@ enum class OutputFormat {
 
 class ResultHandler {
 public:
-    ResultHandler() = default;
+    ResultHandler();
     ~ResultHandler() = default;
 
     // 设置输出格式
@@ -39,6 +40,9 @@ public:
 
     // 设置是否仅输出成功结果
     void set_only_success(bool only) { only_success_ = only; }
+
+    // 检查协议是否有注册输出格式化函数（scanner 启动时校验用）
+    bool has_protocol_formatter(const std::string& name) const;
 
     // 保存单个报告
     void save_report(const ScanReport& report, const std::string& filename);
@@ -86,6 +90,10 @@ private:
     bool only_success_ = false;
     mutable std::size_t ip_seq_ = 0;
     mutable std::unordered_map<std::string, std::size_t> ip_to_seq_;
+
+    // 协议名 → JSON 属性序列化函数
+    using AttrWriter = std::function<void(nlohmann::json&, const ProtocolResult&)>;
+    std::unordered_map<std::string, AttrWriter> attr_writers_;
 };
 
 // =====================

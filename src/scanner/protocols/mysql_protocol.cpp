@@ -100,9 +100,18 @@ void MysqlProtocol::async_probe(
 
                 // Parse MySQL handshake to extract version
                 auto info = parse_mysql_handshake(ctx->buffer->data(), n);
+
+                // Validate: protocol version must be 10 (MySQL standard)
+                if (info.protocol_version != 10) {
+                    ctx->finish_error("Not a MySQL handshake (proto_ver="
+                        + std::to_string(info.protocol_version) + ")");
+                    return;
+                }
+
                 ctx->result.attrs.banner = info.version_string;
                 ctx->result.attrs.vendor = "MySQL " + info.version;
                 // Store version info
+                ctx->result.attrs.mysql.version_string = info.version_string;
                 ctx->result.attrs.mysql.protocol_version = info.protocol_version;
                 ctx->result.attrs.mysql.version = info.version;
                 ctx->result.attrs.mysql.auth_plugin = info.auth_plugin;

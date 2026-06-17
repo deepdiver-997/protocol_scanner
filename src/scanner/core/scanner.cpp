@@ -305,7 +305,16 @@ void Scanner::start(const std::string& source_path) {
         else result_handler_->set_format(OutputFormat::TEXT);
         result_handler_->set_only_success(config_.only_success);
     }
-    
+
+    // 校验：所有启用的协议都有对应的输出 formatter
+    for (const auto& p : protocols_) {
+        if (p && !result_handler_->has_protocol_formatter(p->name())) {
+            std::cerr << "FATAL: No JSON formatter registered for protocol '"
+                      << p->name() << "'. Add it to ResultHandler constructor." << std::endl;
+            std::exit(1);
+        }
+    }
+
     // 启动计时器
     {
         std::lock_guard<std::mutex> lock(stats_mutex_);
