@@ -5,7 +5,7 @@ Description=Scanner dead-man switch: stops scanners if heartbeat file is stale
 Type=oneshot
 ExecStart=/bin/bash -c '\
   HEARTBEAT=/tmp/aliyun_heartbeat; \
-  MAX_AGE_SEC=120; \
+  MAX_AGE_SEC=300; \
   if [ ! -f "$$HEARTBEAT" ]; then \
     echo "FATAL: Heartbeat file $$HEARTBEAT does not exist, stopping all scanners"; \
     systemctl stop "scanner@*.service" 2>/dev/null; \
