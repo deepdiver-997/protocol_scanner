@@ -1,0 +1,213 @@
+{
+  "split": {
+    "fraction": 0.1,
+    "total_unique_ips": 5289,
+    "test_unique_ips": 529,
+    "selection": "stable sha256(ip) first N"
+  },
+  "metrics": {
+    "test_records": 707,
+    "protocol_match": {
+      "matched": 707,
+      "coverage_percent": 100.0
+    },
+    "strong_protocol_match": {
+      "matched": 706,
+      "coverage_percent": 99.86
+    },
+    "implementation_match": {
+      "matched": 706,
+      "coverage_percent": 99.86
+    },
+    "version_extraction": {
+      "matched": 706,
+      "coverage_percent": 99.86
+    },
+    "mode_extraction": {
+      "matched": 705,
+      "coverage_percent": 99.72
+    },
+    "implementation_distribution": [
+      {
+        "implementation": "Redis",
+        "count": 689,
+        "percent": 97.45
+      },
+      {
+        "implementation": "Valkey",
+        "count": 13,
+        "percent": 1.84
+      },
+      {
+        "implementation": "Dragonfly",
+        "count": 3,
+        "percent": 0.42
+      },
+      {
+        "implementation": "unknown",
+        "count": 1,
+        "percent": 0.14
+      },
+      {
+        "implementation": "Memurai",
+        "count": 1,
+        "percent": 0.14
+      }
+    ],
+    "category_coverage": [
+      {
+        "category": "deployment_distribution",
+        "matched_records": 8,
+        "coverage_percent": 1.13
+      },
+      {
+        "category": "deployment_hint",
+        "matched_records": 626,
+        "coverage_percent": 88.54
+      },
+      {
+        "category": "deployment_mode",
+        "matched_records": 705,
+        "coverage_percent": 99.72
+      },
+      {
+        "category": "implementation",
+        "matched_records": 706,
+        "coverage_percent": 99.86
+      },
+      {
+        "category": "probe_depth",
+        "matched_records": 692,
+        "coverage_percent": 97.88
+      },
+      {
+        "category": "protocol_identity",
+        "matched_records": 706,
+        "coverage_percent": 99.86
+      },
+      {
+        "category": "protocol_identity_weak",
+        "matched_records": 1,
+        "coverage_percent": 0.14
+      },
+      {
+        "category": "provider_metadata",
+        "matched_records": 11,
+        "coverage_percent": 1.56
+      },
+      {
+        "category": "runtime_environment",
+        "matched_records": 680,
+        "coverage_percent": 96.18
+      },
+      {
+        "category": "version_extraction",
+        "matched_records": 706,
+        "coverage_percent": 99.86
+      }
+    ],
+    "rule_coverage": [
+      {
+        "rule": "redis.protocol.info-server",
+        "count": 706,
+        "coverage_percent": 99.86
+      },
+      {
+        "rule": "redis.extract.redis-version",
+        "count": 706,
+        "coverage_percent": 99.86
+      },
+      {
+        "rule": "redis.mode.standalone",
+        "count": 704,
+        "coverage_percent": 99.58
+      },
+      {
+        "rule": "redis.protocol.resp-bulk-info",
+        "count": 692,
+        "coverage_percent": 97.88
+      },
+      {
+        "rule": "redis.info.server-section",
+        "count": 692,
+        "coverage_percent": 97.88
+      },
+      {
+        "rule": "redis.impl.redis-server",
+        "count": 689,
+        "coverage_percent": 97.45
+      },
+      {
+        "rule": "redis.runtime.epoll",
+        "count": 679,
+        "coverage_percent": 96.04
+      },
+      {
+        "rule": "redis.runtime.linux",
+        "count": 678,
+        "coverage_percent": 95.9
+      },
+      {
+        "rule": "redis.deploy.linux-package",
+        "count": 361,
+        "coverage_percent": 51.06
+      },
+      {
+        "rule": "redis.info.full",
+        "count": 302,
+        "coverage_percent": 42.72
+      },
+      {
+        "rule": "redis.deploy.container-path",
+        "count": 259,
+        "coverage_percent": 36.63
+      },
+      {
+        "rule": "redis.supervised.systemd",
+        "count": 38,
+        "coverage_percent": 5.37
+      },
+      {
+        "rule": "redis.impl.valkey",
+        "count": 13,
+        "coverage_percent": 1.84
+      },
+      {
+        "rule": "redis.metadata.availability-zone",
+        "count": 11,
+        "coverage_percent": 1.56
+      },
+      {
+        "rule": "redis.deploy.redis-stack",
+        "count": 8,
+        "coverage_percent": 1.13
+      },
+      {
+        "rule": "redis.deploy.usr-local",
+        "count": 6,
+        "coverage_percent": 0.85
+      },
+      {
+        "rule": "redis.impl.dragonfly",
+        "count": 3,
+        "coverage_percent": 0.42
+      },
+      {
+        "rule": "redis.mode.cluster",
+        "count": 1,
+        "coverage_percent": 0.14
+      },
+      {
+        "rule": "redis.protocol.info-error-context",
+        "count": 1,
+        "coverage_percent": 0.14
+      },
+      {
+        "rule": "redis.impl.memurai",
+        "count": 1,
+        "coverage_percent": 0.14
+      }
+    ],
+    "unmatched_examples": []
+  }
+}

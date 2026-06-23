@@ -1,0 +1,655 @@
+{
+  "schema": "protocol-fingerprint-library-v1",
+  "library_id": "redis-compatible-fingerprints",
+  "version": "0.1.0",
+  "generated_at": "2026-06-23T15:23:13.808382+00:00",
+  "source_corpus": {
+    "path": "external REDIS scan corpus (not committed)",
+    "record_count": 7338,
+    "note": "The source corpus contains REDIS scan results only."
+  },
+  "protocol": {
+    "canonical": "REDIS",
+    "name": "Redis Serialization Protocol compatible service",
+    "layer": "application",
+    "transport": [
+      "tcp"
+    ],
+    "common_ports": [
+      6379,
+      6380
+    ],
+    "probe_contexts": [
+      {
+        "id": "redis-ping",
+        "description": "Send PING and expect RESP simple string such as +PONG.",
+        "payload": "PING\\r\\n"
+      },
+      {
+        "id": "redis-info-server",
+        "description": "Send INFO server and parse INFO-style key-value fields when allowed.",
+        "payload": "INFO server\\r\\n"
+      }
+    ]
+  },
+  "normalization": {
+    "strip_resp_bulk_length": true,
+    "volatile_fields": [
+      "process_id",
+      "run_id",
+      "server_time_usec",
+      "uptime_in_seconds",
+      "uptime_in_days",
+      "lru_clock"
+    ],
+    "replace_fields": [
+      "redis_version",
+      "valkey_version",
+      "dragonfly_version",
+      "memurai_version",
+      "redis_git_sha1",
+      "redis_build_id",
+      "os",
+      "gcc_version",
+      "tcp_port",
+      "executable",
+      "config_file"
+    ],
+    "listener_fields": "replace listenerN values with [LISTENER]"
+  },
+  "rules": [
+    {
+      "id": "redis.protocol.info-server",
+      "category": "protocol_identity",
+      "name": "Redis-compatible INFO response",
+      "description": "Identifies Redis-compatible services exposing INFO-style server fields.",
+      "match": {
+        "any": [
+          "(?m)^redis_version:",
+          "(?m)^valkey_version:",
+          "(?m)^dragonfly_version:",
+          "(?m)^memurai_version:"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "service_family": "redis-compatible"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "redis_version|valkey_version|dragonfly_version|memurai_version"
+      ],
+      "notes": "",
+      "sample_count": 7323
+    },
+    {
+      "id": "redis.protocol.resp-bulk-info",
+      "category": "protocol_identity",
+      "name": "RESP bulk INFO server response",
+      "description": "Matches RESP bulk-string output that starts with an INFO Server section.",
+      "match": {
+        "all": [
+          "(?s)^\\$\\d+\\r?\\n# Server\\r?\\n"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "wire_format": "RESP",
+        "response": "INFO"
+      },
+      "confidence": 0.98,
+      "evidence": [
+        "RESP bulk prefix",
+        "# Server"
+      ],
+      "notes": "",
+      "sample_count": 7208
+    },
+    {
+      "id": "redis.protocol.pong",
+      "category": "protocol_identity",
+      "name": "RESP simple PONG response",
+      "description": "Matches the direct response to a Redis PING probe.",
+      "match": {
+        "any": [
+          "(?im)^\\+PONG\\r?$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "wire_format": "RESP",
+        "response": "PING"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "+PONG"
+      ],
+      "notes": "",
+      "sample_count": 1
+    },
+    {
+      "id": "redis.protocol.info-error-context",
+      "category": "protocol_identity_weak",
+      "name": "INFO command error in Redis probe context",
+      "description": "Weak evidence only valid when this banner is known to be the response to an INFO probe after a Redis PING success.",
+      "match": {
+        "requires_context": {
+          "scanner_protocol": "REDIS"
+        },
+        "any": [
+          "(?im)^-ERR unsupported command `?info`?",
+          "(?im)^-ERR wrong number of arguments for '?info'?"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "response": "INFO_ERROR"
+      },
+      "confidence": 0.65,
+      "evidence": [
+        "INFO error",
+        "scanner context"
+      ],
+      "notes": "Do not use this rule against arbitrary passive banners without probe context.",
+      "sample_count": 7
+    },
+    {
+      "id": "redis.protocol.ok-context",
+      "category": "protocol_identity_weak",
+      "name": "Simple OK in Redis probe context",
+      "description": "Weak evidence for minimal Redis-compatible behavior when scanner context already says the Redis probe succeeded.",
+      "match": {
+        "requires_context": {
+          "scanner_protocol": "REDIS"
+        },
+        "any": [
+          "(?im)^\\+OK\\r?$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "response": "OK"
+      },
+      "confidence": 0.55,
+      "evidence": [
+        "+OK",
+        "scanner context"
+      ],
+      "notes": "A bare +OK is not unique to Redis; require active probe context.",
+      "sample_count": 6
+    },
+    {
+      "id": "redis.protocol.scanner-pong-ok-context",
+      "category": "protocol_identity_weak",
+      "name": "Scanner-normalized PONG OK fallback",
+      "description": "Matches scanner-normalized fallback text emitted after Redis PING succeeded but INFO did not return a useful banner.",
+      "match": {
+        "requires_context": {
+          "scanner_protocol": "REDIS"
+        },
+        "any": [
+          "(?im)^Redis \\(PONG OK\\)\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "response": "SCANNER_PONG_OK"
+      },
+      "confidence": 0.6,
+      "evidence": [
+        "scanner fallback",
+        "PING OK"
+      ],
+      "notes": "This is scanner-output text, not a Redis wire banner.",
+      "sample_count": 1
+    },
+    {
+      "id": "redis.protocol.auth-required",
+      "category": "protocol_identity",
+      "name": "Redis authentication required error",
+      "description": "Identifies Redis-compatible services by standard authentication-required error responses to Redis commands.",
+      "match": {
+        "any": [
+          "(?im)^-NOAUTH\\b.*Authentication required",
+          "(?im)^-WRONGPASS\\b",
+          "(?im)^-NOPERM\\b"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "REDIS",
+        "response": "AUTH_REQUIRED_OR_DENIED"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "NOAUTH|WRONGPASS|NOPERM"
+      ],
+      "notes": "Strongest when produced by an active Redis command probe.",
+      "sample_count": 0
+    },
+    {
+      "id": "redis.impl.redis-server",
+      "category": "implementation",
+      "name": "Redis server or Redis-compatible implementation without alternate marker",
+      "description": "Classifies INFO responses with redis_version and no Valkey, Dragonfly or Memurai implementation marker.",
+      "match": {
+        "all": [
+          "(?m)^redis_version:"
+        ],
+        "none": [
+          "(?m)^valkey_version:",
+          "(?m)^dragonfly_version:",
+          "(?m)^memurai_version:",
+          "(?mi)^server_name:valkey\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "implementation": "Redis",
+        "service_family": "redis-compatible"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "redis_version",
+        "absence of known alternate implementation markers"
+      ],
+      "notes": "Some compatible products may only expose redis_version, so this is high-confidence but not absolute.",
+      "sample_count": 7211
+    },
+    {
+      "id": "redis.impl.valkey",
+      "category": "implementation",
+      "name": "Valkey Redis-compatible service",
+      "description": "Identifies Valkey by valkey_version or server_name marker.",
+      "match": {
+        "any": [
+          "(?m)^valkey_version:",
+          "(?mi)^server_name:valkey\\s*$"
+        ]
+      },
+      "extract": [
+        {
+          "field": "version",
+          "regex": "(?m)^valkey_version:(?P<version>[0-9][0-9A-Za-z._+\\-]*)\\s*$",
+          "group": "version"
+        }
+      ],
+      "labels": {
+        "implementation": "Valkey",
+        "service_family": "redis-compatible"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "valkey_version",
+        "server_name"
+      ],
+      "notes": "",
+      "sample_count": 90
+    },
+    {
+      "id": "redis.impl.dragonfly",
+      "category": "implementation",
+      "name": "Dragonfly Redis-compatible service",
+      "description": "Identifies Dragonfly by dragonfly_version marker.",
+      "match": {
+        "all": [
+          "(?m)^dragonfly_version:"
+        ]
+      },
+      "extract": [
+        {
+          "field": "version",
+          "regex": "(?m)^dragonfly_version:(?P<version>[0-9][0-9A-Za-z._+\\-]*)\\s*$",
+          "group": "version"
+        }
+      ],
+      "labels": {
+        "implementation": "Dragonfly",
+        "service_family": "redis-compatible"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "dragonfly_version"
+      ],
+      "notes": "",
+      "sample_count": 20
+    },
+    {
+      "id": "redis.impl.memurai",
+      "category": "implementation",
+      "name": "Memurai Redis-compatible service",
+      "description": "Identifies Memurai by memurai_version marker.",
+      "match": {
+        "all": [
+          "(?m)^memurai_version:"
+        ]
+      },
+      "extract": [
+        {
+          "field": "version",
+          "regex": "(?m)^memurai_version:(?P<version>[0-9][0-9A-Za-z._+\\-]*)\\s*$",
+          "group": "version"
+        }
+      ],
+      "labels": {
+        "implementation": "Memurai",
+        "service_family": "redis-compatible"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "memurai_version"
+      ],
+      "notes": "",
+      "sample_count": 2
+    },
+    {
+      "id": "redis.extract.redis-version",
+      "category": "version_extraction",
+      "name": "redis_version extractor",
+      "description": "Extracts redis_version exposed by Redis and many compatible implementations.",
+      "match": {
+        "all": [
+          "(?m)^redis_version:"
+        ]
+      },
+      "extract": [
+        {
+          "field": "redis_version",
+          "regex": "(?m)^redis_version:(?P<version>[0-9][0-9A-Za-z._+\\-]*)\\s*$",
+          "group": "version"
+        }
+      ],
+      "labels": {
+        "version_field": "redis_version"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "redis_version"
+      ],
+      "notes": "",
+      "sample_count": 7323
+    },
+    {
+      "id": "redis.mode.standalone",
+      "category": "deployment_mode",
+      "name": "Standalone mode",
+      "description": "Identifies standalone mode from redis_mode or server_mode.",
+      "match": {
+        "any": [
+          "(?mi)^redis_mode:standalone\\s*$",
+          "(?mi)^server_mode:standalone\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "mode": "standalone"
+      },
+      "confidence": 0.98,
+      "evidence": [
+        "redis_mode|server_mode"
+      ],
+      "notes": "",
+      "sample_count": 7284
+    },
+    {
+      "id": "redis.mode.cluster",
+      "category": "deployment_mode",
+      "name": "Cluster mode",
+      "description": "Identifies cluster mode from redis_mode or server_mode.",
+      "match": {
+        "any": [
+          "(?mi)^redis_mode:cluster\\s*$",
+          "(?mi)^server_mode:cluster\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "mode": "cluster"
+      },
+      "confidence": 0.98,
+      "evidence": [
+        "redis_mode|server_mode"
+      ],
+      "notes": "",
+      "sample_count": 31
+    },
+    {
+      "id": "redis.info.full",
+      "category": "probe_depth",
+      "name": "Full INFO-style response",
+      "description": "Identifies responses containing Server, Clients and Memory sections.",
+      "match": {
+        "all": [
+          "(?m)^# Server\\r?$",
+          "(?m)^# Clients\\r?$",
+          "(?m)^# Memory\\r?$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "info_scope": "full_or_multi_section"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "# Server",
+        "# Clients",
+        "# Memory"
+      ],
+      "notes": "",
+      "sample_count": 3584
+    },
+    {
+      "id": "redis.info.server-section",
+      "category": "probe_depth",
+      "name": "Server-section INFO response",
+      "description": "Identifies responses containing at least the INFO Server section.",
+      "match": {
+        "all": [
+          "(?m)^# Server\\r?$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "info_scope": "server_section"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "# Server"
+      ],
+      "notes": "",
+      "sample_count": 7209
+    },
+    {
+      "id": "redis.deploy.redis-stack",
+      "category": "deployment_distribution",
+      "name": "Redis Stack path marker",
+      "description": "Identifies Redis Stack-like deployments by executable or config path.",
+      "match": {
+        "any": [
+          "(?m)^executable:.*/redis-stack/bin/redis-server\\s*$",
+          "(?m)^config_file:.*/redis-stack\\.conf\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "distribution": "redis-stack"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "executable",
+        "config_file"
+      ],
+      "notes": "",
+      "sample_count": 110
+    },
+    {
+      "id": "redis.deploy.container-path",
+      "category": "deployment_hint",
+      "name": "Container-style /data redis-server path",
+      "description": "Identifies a common container image layout with /data/redis-server and empty config_file.",
+      "match": {
+        "all": [
+          "(?m)^executable:/data/redis-server\\s*$",
+          "(?m)^config_file:\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "deployment_hint": "container-like"
+      },
+      "confidence": 0.8,
+      "evidence": [
+        "executable",
+        "config_file"
+      ],
+      "notes": "",
+      "sample_count": 2438
+    },
+    {
+      "id": "redis.deploy.linux-package",
+      "category": "deployment_hint",
+      "name": "Linux package install layout",
+      "description": "Identifies common Linux package installation layout.",
+      "match": {
+        "all": [
+          "(?m)^executable:/usr/bin/redis-server\\s*$",
+          "(?m)^config_file:/etc/(redis/redis\\.conf|redis\\.conf)\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "deployment_hint": "linux-package"
+      },
+      "confidence": 0.82,
+      "evidence": [
+        "executable",
+        "config_file"
+      ],
+      "notes": "",
+      "sample_count": 4133
+    },
+    {
+      "id": "redis.deploy.usr-local",
+      "category": "deployment_hint",
+      "name": "Custom /usr/local install layout",
+      "description": "Identifies Redis server executable installed under /usr/local/bin.",
+      "match": {
+        "all": [
+          "(?m)^executable:/usr/local/bin/redis-server\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "deployment_hint": "custom-usr-local"
+      },
+      "confidence": 0.78,
+      "evidence": [
+        "executable"
+      ],
+      "notes": "",
+      "sample_count": 20
+    },
+    {
+      "id": "redis.runtime.linux",
+      "category": "runtime_environment",
+      "name": "Linux runtime",
+      "description": "Extracts Linux OS string from INFO server.",
+      "match": {
+        "all": [
+          "(?m)^os:Linux "
+        ]
+      },
+      "extract": [
+        {
+          "field": "os",
+          "regex": "(?m)^os:(?P<os>[^\\r\\n]+)\\s*$",
+          "group": "os"
+        }
+      ],
+      "labels": {
+        "os_family": "Linux"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "os"
+      ],
+      "notes": "",
+      "sample_count": 7125
+    },
+    {
+      "id": "redis.runtime.epoll",
+      "category": "runtime_environment",
+      "name": "epoll multiplexing API",
+      "description": "Identifies Linux epoll event multiplexing in INFO server.",
+      "match": {
+        "all": [
+          "(?m)^multiplexing_api:epoll\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "multiplexing_api": "epoll"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "multiplexing_api"
+      ],
+      "notes": "",
+      "sample_count": 7130
+    },
+    {
+      "id": "redis.supervised.systemd",
+      "category": "runtime_environment",
+      "name": "systemd supervision",
+      "description": "Identifies Redis process supervision by systemd.",
+      "match": {
+        "all": [
+          "(?m)^process_supervised:systemd\\s*$"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "process_supervised": "systemd"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "process_supervised"
+      ],
+      "notes": "",
+      "sample_count": 376
+    },
+    {
+      "id": "redis.metadata.availability-zone",
+      "category": "provider_metadata",
+      "name": "Availability zone metadata field",
+      "description": "Detects cloud/provider metadata exposed by some Redis-compatible services.",
+      "match": {
+        "all": [
+          "(?m)^availability_zone:"
+        ]
+      },
+      "extract": [
+        {
+          "field": "availability_zone",
+          "regex": "(?m)^availability_zone:(?P<az>[^\\r\\n]+)\\s*$",
+          "group": "az"
+        }
+      ],
+      "labels": {
+        "metadata": "availability_zone"
+      },
+      "confidence": 0.85,
+      "evidence": [
+        "availability_zone"
+      ],
+      "notes": "",
+      "sample_count": 81
+    }
+  ]
+}

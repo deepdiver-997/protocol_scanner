@@ -1,0 +1,103 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Protocol Fingerprint Library v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "library_id",
+    "version",
+    "protocol",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "protocol-fingerprint-library-v1"
+    },
+    "library_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "object"
+    },
+    "normalization": {
+      "type": "object"
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "category",
+          "match",
+          "labels",
+          "confidence",
+          "evidence"
+        ],
+        "properties": {
+          "id": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "match": {
+            "type": "object",
+            "properties": {
+              "all": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "any": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "none": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "requires_context": {
+                "type": "object"
+              }
+            }
+          },
+          "extract": {
+            "type": "array"
+          },
+          "labels": {
+            "type": "object"
+          },
+          "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    }
+  }
+}

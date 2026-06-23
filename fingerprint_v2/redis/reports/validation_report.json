@@ -1,0 +1,966 @@
+{
+  "record_count": 7338,
+  "protocol_identity_coverage": {
+    "matched_records": 7338,
+    "unmatched_records": 0,
+    "coverage_percent": 100.0,
+    "unmatched_examples": []
+  },
+  "rule_counts": [
+    {
+      "id": "redis.protocol.info-server",
+      "count": 7323,
+      "coverage_percent": 99.8
+    },
+    {
+      "id": "redis.extract.redis-version",
+      "count": 7323,
+      "coverage_percent": 99.8
+    },
+    {
+      "id": "redis.mode.standalone",
+      "count": 7284,
+      "coverage_percent": 99.26
+    },
+    {
+      "id": "redis.impl.redis-server",
+      "count": 7211,
+      "coverage_percent": 98.27
+    },
+    {
+      "id": "redis.info.server-section",
+      "count": 7209,
+      "coverage_percent": 98.24
+    },
+    {
+      "id": "redis.protocol.resp-bulk-info",
+      "count": 7208,
+      "coverage_percent": 98.23
+    },
+    {
+      "id": "redis.runtime.epoll",
+      "count": 7130,
+      "coverage_percent": 97.17
+    },
+    {
+      "id": "redis.runtime.linux",
+      "count": 7125,
+      "coverage_percent": 97.1
+    },
+    {
+      "id": "redis.deploy.linux-package",
+      "count": 4133,
+      "coverage_percent": 56.32
+    },
+    {
+      "id": "redis.info.full",
+      "count": 3584,
+      "coverage_percent": 48.84
+    },
+    {
+      "id": "redis.deploy.container-path",
+      "count": 2438,
+      "coverage_percent": 33.22
+    },
+    {
+      "id": "redis.supervised.systemd",
+      "count": 376,
+      "coverage_percent": 5.12
+    },
+    {
+      "id": "redis.deploy.redis-stack",
+      "count": 110,
+      "coverage_percent": 1.5
+    },
+    {
+      "id": "redis.impl.valkey",
+      "count": 90,
+      "coverage_percent": 1.23
+    },
+    {
+      "id": "redis.metadata.availability-zone",
+      "count": 81,
+      "coverage_percent": 1.1
+    },
+    {
+      "id": "redis.mode.cluster",
+      "count": 31,
+      "coverage_percent": 0.42
+    },
+    {
+      "id": "redis.deploy.usr-local",
+      "count": 20,
+      "coverage_percent": 0.27
+    },
+    {
+      "id": "redis.impl.dragonfly",
+      "count": 20,
+      "coverage_percent": 0.27
+    },
+    {
+      "id": "redis.protocol.info-error-context",
+      "count": 7,
+      "coverage_percent": 0.1
+    },
+    {
+      "id": "redis.protocol.ok-context",
+      "count": 6,
+      "coverage_percent": 0.08
+    },
+    {
+      "id": "redis.impl.memurai",
+      "count": 2,
+      "coverage_percent": 0.03
+    },
+    {
+      "id": "redis.protocol.pong",
+      "count": 1,
+      "coverage_percent": 0.01
+    },
+    {
+      "id": "redis.protocol.scanner-pong-ok-context",
+      "count": 1,
+      "coverage_percent": 0.01
+    }
+  ],
+  "category_coverage": [
+    {
+      "category": "deployment_distribution",
+      "matched_records": 110,
+      "coverage_percent": 1.5
+    },
+    {
+      "category": "deployment_hint",
+      "matched_records": 6591,
+      "coverage_percent": 89.82
+    },
+    {
+      "category": "deployment_mode",
+      "matched_records": 7315,
+      "coverage_percent": 99.69
+    },
+    {
+      "category": "implementation",
+      "matched_records": 7323,
+      "coverage_percent": 99.8
+    },
+    {
+      "category": "probe_depth",
+      "matched_records": 7209,
+      "coverage_percent": 98.24
+    },
+    {
+      "category": "protocol_identity",
+      "matched_records": 7324,
+      "coverage_percent": 99.81
+    },
+    {
+      "category": "protocol_identity_weak",
+      "matched_records": 14,
+      "coverage_percent": 0.19
+    },
+    {
+      "category": "provider_metadata",
+      "matched_records": 81,
+      "coverage_percent": 1.1
+    },
+    {
+      "category": "runtime_environment",
+      "matched_records": 7148,
+      "coverage_percent": 97.41
+    },
+    {
+      "category": "version_extraction",
+      "matched_records": 7323,
+      "coverage_percent": 99.8
+    }
+  ],
+  "implementation_distribution": [
+    {
+      "implementation": "Redis",
+      "count": 7211,
+      "percent": 98.27
+    },
+    {
+      "implementation": "Valkey",
+      "count": 90,
+      "percent": 1.23
+    },
+    {
+      "implementation": "Dragonfly",
+      "count": 20,
+      "percent": 0.27
+    },
+    {
+      "implementation": "unknown",
+      "count": 15,
+      "percent": 0.2
+    },
+    {
+      "implementation": "Memurai",
+      "count": 2,
+      "percent": 0.03
+    }
+  ],
+  "top_extracted_values": {
+    "redis_version": [
+      {
+        "value": "5.0.5",
+        "count": 3555
+      },
+      {
+        "value": "7.4.9",
+        "count": 465
+      },
+      {
+        "value": "7.4.8",
+        "count": 419
+      },
+      {
+        "value": "7.4.7",
+        "count": 353
+      },
+      {
+        "value": "7.0.15",
+        "count": 258
+      },
+      {
+        "value": "6.0.16",
+        "count": 168
+      },
+      {
+        "value": "7.2.4",
+        "count": 162
+      },
+      {
+        "value": "8.8.0",
+        "count": 129
+      },
+      {
+        "value": "8.6.2",
+        "count": 128
+      },
+      {
+        "value": "8.4.0",
+        "count": 117
+      },
+      {
+        "value": "6.0.10",
+        "count": 113
+      },
+      {
+        "value": "7.4.2",
+        "count": 82
+      },
+      {
+        "value": "8.6.3",
+        "count": 71
+      },
+      {
+        "value": "7.4.1",
+        "count": 65
+      },
+      {
+        "value": "7.4.5",
+        "count": 62
+      },
+      {
+        "value": "6.2.14",
+        "count": 56
+      },
+      {
+        "value": "8.6.1",
+        "count": 55
+      },
+      {
+        "value": "7.4.0",
+        "count": 48
+      },
+      {
+        "value": "7.4.6",
+        "count": 46
+      },
+      {
+        "value": "8.2.1",
+        "count": 44
+      }
+    ],
+    "os": [
+      {
+        "value": "Linux 4.14.109-99.92.amzn2.x86_64 x86_64",
+        "count": 3552
+      },
+      {
+        "value": "Linux 6.8.0-71-generic x86_64",
+        "count": 106
+      },
+      {
+        "value": "Linux 6.14.0-1018-aws x86_64",
+        "count": 96
+      },
+      {
+        "value": "Linux 6.1.170 x86_64",
+        "count": 93
+      },
+      {
+        "value": "Linux 6.8.0-124-generic x86_64",
+        "count": 82
+      },
+      {
+        "value": "Linux 6.17.0-1017-aws x86_64",
+        "count": 76
+      },
+      {
+        "value": "Linux 6.17.0-1013-aws x86_64",
+        "count": 70
+      },
+      {
+        "value": "Linux 7.0.0-1004-aws x86_64",
+        "count": 56
+      },
+      {
+        "value": "Linux 6.8.0-90-generic x86_64",
+        "count": 55
+      },
+      {
+        "value": "Linux 6.8.0-117-generic x86_64",
+        "count": 54
+      },
+      {
+        "value": "Linux 6.17.0-1007-aws x86_64",
+        "count": 52
+      },
+      {
+        "value": "Linux 6.1.146.1-microsoft-standard x86_64",
+        "count": 49
+      },
+      {
+        "value": "Linux 6.1.172 x86_64",
+        "count": 43
+      },
+      {
+        "value": "Linux 6.17.0-1009-aws x86_64",
+        "count": 40
+      },
+      {
+        "value": "Linux 6.17.0-1010-aws x86_64",
+        "count": 40
+      },
+      {
+        "value": "Linux 5.4.0-216-generic x86_64",
+        "count": 39
+      },
+      {
+        "value": "Linux 6.8.0-1029-aws x86_64",
+        "count": 37
+      },
+      {
+        "value": "Linux 6.14.0-1015-aws x86_64",
+        "count": 36
+      },
+      {
+        "value": "Linux 6.8.0-111-generic x86_64",
+        "count": 36
+      },
+      {
+        "value": "Linux 6.8.0-1053-aws x86_64",
+        "count": 35
+      }
+    ],
+    "version": [
+      {
+        "value": "9.1.0",
+        "count": 38
+      },
+      {
+        "value": "8.1.1",
+        "count": 9
+      },
+      {
+        "value": "8.0.2",
+        "count": 5
+      },
+      {
+        "value": "9.0.0",
+        "count": 3
+      },
+      {
+        "value": "8.0.1",
+        "count": 3
+      },
+      {
+        "value": "8.1.7",
+        "count": 3
+      },
+      {
+        "value": "7.2",
+        "count": 3
+      },
+      {
+        "value": "8.1.5",
+        "count": 3
+      },
+      {
+        "value": "8.1.3",
+        "count": 2
+      },
+      {
+        "value": "8.1.0",
+        "count": 2
+      },
+      {
+        "value": "8.1.6",
+        "count": 2
+      },
+      {
+        "value": "7.2.13",
+        "count": 2
+      },
+      {
+        "value": "7.2.12",
+        "count": 2
+      },
+      {
+        "value": "8.1.8",
+        "count": 2
+      },
+      {
+        "value": "9.0.4",
+        "count": 1
+      },
+      {
+        "value": "7.2.11",
+        "count": 1
+      },
+      {
+        "value": "7.2.6",
+        "count": 1
+      },
+      {
+        "value": "8.2.0",
+        "count": 1
+      },
+      {
+        "value": "7.2.5",
+        "count": 1
+      },
+      {
+        "value": "9.0.1",
+        "count": 1
+      }
+    ],
+    "availability_zone": [
+      {
+        "value": "eu-west-3a",
+        "count": 1
+      },
+      {
+        "value": "us-west-1a",
+        "count": 1
+      },
+      {
+        "value": "ap-east-1a",
+        "count": 1
+      }
+    ]
+  },
+  "observed_field_counts": [
+    {
+      "field": "redis_version",
+      "count": 7323
+    },
+    {
+      "field": "os",
+      "count": 7321
+    },
+    {
+      "field": "arch_bits",
+      "count": 7307
+    },
+    {
+      "field": "tcp_port",
+      "count": 7303
+    },
+    {
+      "field": "uptime_in_seconds",
+      "count": 7302
+    },
+    {
+      "field": "uptime_in_days",
+      "count": 7299
+    },
+    {
+      "field": "multiplexing_api",
+      "count": 7298
+    },
+    {
+      "field": "process_id",
+      "count": 7294
+    },
+    {
+      "field": "hz",
+      "count": 7293
+    },
+    {
+      "field": "config_file",
+      "count": 7292
+    },
+    {
+      "field": "redis_git_sha1",
+      "count": 7283
+    },
+    {
+      "field": "run_id",
+      "count": 7283
+    },
+    {
+      "field": "redis_git_dirty",
+      "count": 7277
+    },
+    {
+      "field": "redis_build_id",
+      "count": 7277
+    },
+    {
+      "field": "lru_clock",
+      "count": 7277
+    },
+    {
+      "field": "redis_mode",
+      "count": 7239
+    },
+    {
+      "field": "executable",
+      "count": 7237
+    },
+    {
+      "field": "gcc_version",
+      "count": 7212
+    },
+    {
+      "field": "configured_hz",
+      "count": 7182
+    },
+    {
+      "field": "atomicvar_api",
+      "count": 7116
+    },
+    {
+      "field": "connected_clients",
+      "count": 3706
+    },
+    {
+      "field": "used_memory_human",
+      "count": 3699
+    },
+    {
+      "field": "used_memory",
+      "count": 3698
+    },
+    {
+      "field": "blocked_clients",
+      "count": 3696
+    },
+    {
+      "field": "used_memory_rss",
+      "count": 3696
+    },
+    {
+      "field": "used_memory_rss_human",
+      "count": 3695
+    },
+    {
+      "field": "client_recent_max_input_buffer",
+      "count": 3693
+    },
+    {
+      "field": "client_recent_max_output_buffer",
+      "count": 3693
+    },
+    {
+      "field": "used_memory_peak",
+      "count": 3689
+    },
+    {
+      "field": "used_memory_peak_human",
+      "count": 3689
+    },
+    {
+      "field": "used_memory_peak_perc",
+      "count": 3688
+    },
+    {
+      "field": "used_memory_overhead",
+      "count": 3670
+    },
+    {
+      "field": "used_memory_startup",
+      "count": 3670
+    },
+    {
+      "field": "used_memory_dataset",
+      "count": 3670
+    },
+    {
+      "field": "used_memory_dataset_perc",
+      "count": 3670
+    },
+    {
+      "field": "allocator_allocated",
+      "count": 3670
+    },
+    {
+      "field": "allocator_active",
+      "count": 3669
+    },
+    {
+      "field": "total_system_memory",
+      "count": 3553
+    },
+    {
+      "field": "allocator_resident",
+      "count": 3552
+    },
+    {
+      "field": "io_threads_active",
+      "count": 3537
+    },
+    {
+      "field": "server_time_usec",
+      "count": 3259
+    },
+    {
+      "field": "process_supervised",
+      "count": 3237
+    },
+    {
+      "field": "monotonic_clock",
+      "count": 3209
+    },
+    {
+      "field": "listener0",
+      "count": 2665
+    },
+    {
+      "field": "tracking_clients",
+      "count": 141
+    },
+    {
+      "field": "clients_in_timeout_table",
+      "count": 141
+    },
+    {
+      "field": "server_name",
+      "count": 90
+    },
+    {
+      "field": "valkey_version",
+      "count": 90
+    },
+    {
+      "field": "availability_zone",
+      "count": 81
+    },
+    {
+      "field": "server_mode",
+      "count": 76
+    },
+    {
+      "field": "valkey_release_stage",
+      "count": 69
+    },
+    {
+      "field": "clients_hz",
+      "count": 69
+    },
+    {
+      "field": "cluster_connections",
+      "count": 23
+    },
+    {
+      "field": "maxclients",
+      "count": 23
+    },
+    {
+      "field": "dragonfly_version",
+      "count": 20
+    },
+    {
+      "field": "thread_count",
+      "count": 20
+    },
+    {
+      "field": "role",
+      "count": 5
+    },
+    {
+      "field": "total_blocking_keys",
+      "count": 5
+    },
+    {
+      "field": "total_blocking_keys_on_nokey",
+      "count": 5
+    },
+    {
+      "field": "total_connections_received",
+      "count": 4
+    },
+    {
+      "field": "connected_slaves",
+      "count": 4
+    },
+    {
+      "field": "listener1",
+      "count": 3
+    },
+    {
+      "field": "total_commands_processed",
+      "count": 3
+    },
+    {
+      "field": "db0",
+      "count": 3
+    },
+    {
+      "field": "features",
+      "count": 2
+    },
+    {
+      "field": "memurai_version",
+      "count": 2
+    },
+    {
+      "field": "vp",
+      "count": 2
+    },
+    {
+      "field": "service_name",
+      "count": 2
+    },
+    {
+      "field": "maxmemory",
+      "count": 2
+    },
+    {
+      "field": "loading",
+      "count": 2
+    },
+    {
+      "field": "rdb_changes_since_last_save",
+      "count": 2
+    },
+    {
+      "field": "rdb_last_save_time",
+      "count": 2
+    },
+    {
+      "field": "master_replid",
+      "count": 1
+    },
+    {
+      "field": "master_replid2",
+      "count": 1
+    },
+    {
+      "field": "master_repl_offset",
+      "count": 1
+    },
+    {
+      "field": "second_repl_offset",
+      "count": 1
+    },
+    {
+      "field": "repl_backlog_active",
+      "count": 1
+    },
+    {
+      "field": "repl_backlog_size",
+      "count": 1
+    },
+    {
+      "field": "repl_backlog_first_byte_offset",
+      "count": 1
+    },
+    {
+      "field": "repl_backlog_histlen",
+      "count": 1
+    },
+    {
+      "field": "client_longest_output_list",
+      "count": 1
+    },
+    {
+      "field": "client_biggest_input_buf",
+      "count": 1
+    },
+    {
+      "field": "total_system_memory_human",
+      "count": 1
+    },
+    {
+      "field": "used_memory_lua",
+      "count": 1
+    },
+    {
+      "field": "used_memory_lua_human",
+      "count": 1
+    },
+    {
+      "field": "maxmemory_human",
+      "count": 1
+    },
+    {
+      "field": "maxmemory_policy",
+      "count": 1
+    },
+    {
+      "field": "mem_fragmentation_ratio",
+      "count": 1
+    },
+    {
+      "field": "mem_allocator",
+      "count": 1
+    },
+    {
+      "field": "lazyfree_pending_objects",
+      "count": 1
+    },
+    {
+      "field": "rdb_bgsave_in_progress",
+      "count": 1
+    },
+    {
+      "field": "instantaneous_ops_per_sec",
+      "count": 1
+    },
+    {
+      "field": "memurai_edition",
+      "count": 1
+    }
+  ],
+  "rule_examples": {
+    "redis.protocol.info-server": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.protocol.resp-bulk-info": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.impl.redis-server": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.extract.redis-version": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {
+        "redis_version": "6.0.16"
+      }
+    },
+    "redis.mode.standalone": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.info.server-section": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.deploy.linux-package": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.runtime.linux": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {
+        "os": "Linux 5.15.0-179-generic x86_64"
+      }
+    },
+    "redis.runtime.epoll": {
+      "port": 6379,
+      "banner_preview": "$516\\r\\n# Server\\r\\nredis_version:6.0.16\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:e91d7986ac6d5bb6\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-179-generic x86_64\\r\\narch_bits:64\\r\\nmultiplexing_api:epoll\\r\\natomicva",
+      "extracted": {}
+    },
+    "redis.supervised.systemd": {
+      "port": 6379,
+      "banner_preview": "$653\\r\\n# Server\\r\\nredis_version:8.4.0\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:1\\r\\nredis_build_id:711c294ad663ee6e\\r\\nredis_mode:standalone\\r\\nos:Linux 5.15.0-181-generic x86_64\\r\\narch_bits:64\\r\\nmonotonic_clock:POSIX clock_getti",
+      "extracted": {}
+    },
+    "redis.deploy.usr-local": {
+      "port": 6379,
+      "banner_preview": "$675\\r\\n# Server\\r\\nredis_version:8.3.240\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:1\\r\\nredis_build_id:a7186e4acf89d6ee\\r\\nredis_mode:standalone\\r\\nos:Linux 6.1.158-178.288.amzn2023.x86_64 x86_64\\r\\narch_bits:64\\r\\nmonotonic_clock:PO",
+      "extracted": {}
+    },
+    "redis.deploy.container-path": {
+      "port": 6379,
+      "banner_preview": "$636\\r\\n# Server\\r\\nredis_version:8.2.2\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:1\\r\\nredis_build_id:f23c60fd859224ac\\r\\nredis_mode:standalone\\r\\nos:Linux 5.14.0-570.52.1.el9_6.x86_64 x86_64\\r\\narch_bits:64\\r\\nmonotonic_clock:POSIX c",
+      "extracted": {}
+    },
+    "redis.info.full": {
+      "port": 6380,
+      "banner_preview": "$3133\\r\\n# Server\\nredis_version:5.0.5\\nredis_git_sha1:00000000\\nredis_git_dirty:0\\nredis_build_id:619d60bfb0a92c36\\nredis_mode:standalone\\nos:Linux 4.14.109-99.92.amzn2.x86_64 x86_64\\narch_bits:64\\nmultiplexing_api:epoll\\natomicva",
+      "extracted": {}
+    },
+    "redis.deploy.redis-stack": {
+      "port": 6379,
+      "banner_preview": "$654\\r\\n# Server\\r\\nredis_version:7.4.5\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:b6b2e66014f8e765\\r\\nredis_mode:standalone\\r\\nos:Linux 6.1.140-154.222.amzn2023.x86_64 x86_64\\r\\narch_bits:64\\r\\nmonotonic_clock:POSI",
+      "extracted": {}
+    },
+    "redis.impl.valkey": {
+      "port": 6379,
+      "banner_preview": "$718\\r\\n# Server\\r\\nredis_version:7.2.4\\r\\nserver_name:valkey\\r\\nvalkey_version:8.1.1\\r\\nvalkey_release_stage:ga\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:5beb99de11516a6b\\r\\nserver_mode:standalone\\r\\nos:Linux 6.1.13",
+      "extracted": {
+        "version": "8.1.1"
+      }
+    },
+    "redis.metadata.availability-zone": {
+      "port": 6379,
+      "banner_preview": "$718\\r\\n# Server\\r\\nredis_version:7.2.4\\r\\nserver_name:valkey\\r\\nvalkey_version:8.1.1\\r\\nvalkey_release_stage:ga\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:5beb99de11516a6b\\r\\nserver_mode:standalone\\r\\nos:Linux 6.1.13",
+      "extracted": {}
+    },
+    "redis.mode.cluster": {
+      "port": 6379,
+      "banner_preview": "$566\\r\\n# Server\\r\\nredis_version:7.0.15\\r\\nredis_git_sha1:00000000\\r\\nredis_git_dirty:0\\r\\nredis_build_id:91081cd73f31ec\\r\\nredis_mode:cluster\\r\\nos:Linux 6.8.0-1057-aws x86_64\\r\\narch_bits:64\\r\\nmonotonic_clock:POSIX clock_gettime\\r\\nmult",
+      "extracted": {}
+    },
+    "redis.impl.dragonfly": {
+      "port": 6379,
+      "banner_preview": "$238\\r\\n# Server\\r\\nredis_version:7.4.0\\r\\ndragonfly_version:df-v1.30.1\\r\\nredis_mode:standalone\\r\\narch_bits:64\\r\\nos:Linux 5.15.0-1092-azure x86_64\\r\\nthread_count:8\\r\\nmultiplexing_api:iouring\\r\\ntcp_port:6379\\r\\nuptime_in_seconds:134271",
+      "extracted": {}
+    },
+    "redis.protocol.ok-context": {
+      "port": 6379,
+      "banner_preview": "+OK\\r\\n",
+      "extracted": {}
+    },
+    "redis.impl.memurai": {
+      "port": 6379,
+      "banner_preview": "$653\\r\\n# Server\\r\\nmemurai_version:8.1.240\\r\\nredis_version:8.2.5\\r\\nredis_mode:standalone\\r\\nos:Windows Server 10.0.17763 \\r\\narch_bits:64\\r\\nvp:yes\\r\\nmonotonic_clock:Windows QueryPerformanceCounter\\r\\nmultiplexing_api:WinSock_IOCP\\r\\nat",
+      "extracted": {
+        "version": "8.1.240"
+      }
+    },
+    "redis.protocol.info-error-context": {
+      "port": 6379,
+      "banner_preview": "-ERR unsupported command `info`\\r\\n",
+      "extracted": {}
+    },
+    "redis.protocol.pong": {
+      "port": 6380,
+      "banner_preview": "+PONG\\r\\n",
+      "extracted": {}
+    },
+    "redis.protocol.scanner-pong-ok-context": {
+      "port": 6379,
+      "banner_preview": "Redis (PONG OK)",
+      "extracted": {}
+    }
+  }
+}
