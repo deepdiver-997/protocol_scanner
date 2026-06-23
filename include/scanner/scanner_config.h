@@ -4,6 +4,7 @@
 #include <vector>
 #include <chrono>
 #include <cstddef>
+#include <unordered_map>
 
 namespace scanner {
 
@@ -31,24 +32,29 @@ struct ScannerConfig {
     bool enable_zmap_filter = false;    // 启用 ZMap 预过滤：先扫开放端口再精细识别
     int zmap_port = 0;                  // ZMap 扫描端口，0=不使用 zmap
 
-    // Protocol 配置
-    bool enable_smtp = false;
-    bool enable_pop3 = false;
-    bool enable_imap = false;
-    bool enable_http = true;
-    bool enable_ftp = true;
-    bool enable_telnet = false;
-    bool enable_ssh = true;
-    bool enable_redis = false;
-    bool enable_rtsp = false;
-    bool enable_sip = false;
-    bool enable_mysql = false;
+    // Protocol 配置 — map 替代独立 bool，新增协议只需加一行
+    #define PE(name, def) {#name, def},
+    std::unordered_map<std::string, bool> protocol_enabled = {
+        PE(SMTP,   false)
+        PE(POP3,   false)
+        PE(IMAP,   false)
+        PE(HTTP,   true)
+        PE(FTP,    true)
+        PE(TELNET, false)
+        PE(SSH,    true)
+        PE(REDIS,  false)
+        PE(RTSP,   false)
+        PE(SIP,    false)
+        PE(MYSQL,  false)
+        PE(PGSQL,  false)
+        PE(MONGO,  false)
+    };
+    #undef PE
     bool scan_all_ports = false;
 
     bool has_any_protocol_enabled() const {
-        return enable_smtp || enable_pop3 || enable_imap || enable_http ||
-               enable_ftp  || enable_telnet || enable_ssh || enable_redis ||
-               enable_rtsp || enable_sip   || enable_mysql;
+        for (auto& [_, en] : protocol_enabled) if (en) return true;
+        return false;
     }
 
     // DNS 配置

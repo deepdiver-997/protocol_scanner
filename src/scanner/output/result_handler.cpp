@@ -90,6 +90,19 @@ ResultHandler::ResultHandler() {
         jp["ftp"] = a;
     };
     // 以下协议无专用结构体，仅需占位通过启动校验
+    attr_writers_["PGSQL"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["version"] = sanitize_utf8(pr.attrs.pgsql.version);
+        a["protocol_version"] = pr.attrs.pgsql.protocol_version;
+        jp["pgsql"] = a;
+    };
+    attr_writers_["MONGO"] = [](json& jp, const ProtocolResult& pr) {
+        json a;
+        a["version"] = sanitize_utf8(pr.attrs.mongo.version);
+        a["max_wire_version"] = pr.attrs.mongo.max_wire_version;
+        a["is_master"] = pr.attrs.mongo.is_master;
+        jp["mongodb"] = a;
+    };
     attr_writers_["TELNET"] = [](json&, const ProtocolResult&) {};
     attr_writers_["REDIS"] = [](json&, const ProtocolResult&) {};
     attr_writers_["RTSP"]  = [](json&, const ProtocolResult&) {};

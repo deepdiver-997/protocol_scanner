@@ -213,6 +213,10 @@ set(PROTOCOL_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/rtsp_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/sip_protocol.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/mysql_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/postgresql_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/mongodb_protocol.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/protocol_factory.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/protocols/protocol_registry_init.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/protocols/protocol_parsers.cpp
 )
 
@@ -339,19 +343,28 @@ configure_file(
 # 单元测试
 # =====================
 
-find_package(Catch2 QUIET)
-if(Catch2_FOUND)
-    add_executable(unit_test
-        tests/unit/smtp_parser_test.cpp
-        tests/unit/ssh_ftp_parser_test.cpp
-        tests/unit/pop3_imap_http_parser_test.cpp
-        tests/unit/mysql_parser_test.cpp
-    )
-    target_link_libraries(unit_test PRIVATE scanner_core Catch2::Catch2 Catch2::Catch2WithMain)
-    target_compile_features(unit_test PRIVATE cxx_std_20)
-    message(STATUS "  Catch2: ${Catch2_VERSION} (unit tests enabled)")
+option(ENABLE_TESTS "Build unit tests (requires Catch2)" ON)
+
+if(ENABLE_TESTS)
+    find_package(Catch2 QUIET)
+    if(Catch2_FOUND)
+        add_executable(unit_test
+            tests/unit/smtp_parser_test.cpp
+            tests/unit/ssh_ftp_parser_test.cpp
+            tests/unit/pop3_imap_http_parser_test.cpp
+            tests/unit/mysql_parser_test.cpp
+        )
+        target_link_libraries(unit_test PRIVATE scanner_core Catch2::Catch2 Catch2::Catch2WithMain)
+        target_include_directories(unit_test PRIVATE
+            ${CMAKE_SOURCE_DIR}/include
+        )
+        target_compile_features(unit_test PRIVATE cxx_std_20)
+        message(STATUS "  Catch2: ${Catch2_VERSION} (unit tests enabled)")
+    else()
+        message(STATUS "  Catch2: not found, unit tests disabled (brew install catch2)")
+    endif()
 else()
-    message(STATUS "  Catch2: not found (unit tests disabled, brew install catch2)")
+    message(STATUS "  Unit tests: disabled (ENABLE_TESTS=OFF)")
 endif()
 
 # 快速 probe 测试（手动运行）

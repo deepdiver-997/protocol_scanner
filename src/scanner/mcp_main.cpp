@@ -112,17 +112,7 @@ int main(int argc, char* argv[]) {
     cfg.result_queue_max_size   = slots * 2;
 
     // 启用全部协议
-    cfg.enable_smtp   = true;
-    cfg.enable_pop3   = true;
-    cfg.enable_imap   = true;
-    cfg.enable_http   = true;
-    cfg.enable_ftp    = true;
-    cfg.enable_telnet = true;
-    cfg.enable_ssh    = true;
-    cfg.enable_redis  = true;
-    cfg.enable_rtsp   = true;
-    cfg.enable_sip    = true;
-    cfg.enable_mysql  = true;
+    for (auto& [name, enabled] : cfg.protocol_enabled) enabled = true;
 
     // ---- 初始化 logger（精简：仅控制台 warn+） ----
     scanner::Logger::get_instance().init(
@@ -142,7 +132,7 @@ int main(int argc, char* argv[]) {
               << ", slots=" << slots
               << ", timeout=" << probe_ms << "ms"
               << std::endl;
-    std::cout << "[mcp] All 11 protocols enabled" << std::endl;
+    std::cout << "[mcp] All 13 protocols enabled" << std::endl;
     std::cout << "[mcp] echo '{\"target\":\"1.2.3.4\"}' | nc localhost " << port << std::endl;
 
     scanner.start("");

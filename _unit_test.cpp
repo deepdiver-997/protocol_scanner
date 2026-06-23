@@ -13,7 +13,7 @@ int main() {
 
     // 创建模拟配置文件——只开 SSH
     ScannerConfig config;
-    config.enable_ssh = true;
+    config.protocol_enabled["SSH"] = true;
     config.batch_size = 10;
     config.output_dir = "./result_test";
     config.output_format = "text";

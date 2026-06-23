@@ -98,6 +98,19 @@ struct ProtocolAttributes {
         uint32_t capability_flags = 0; // 能力标志
     } mysql;
 
+    // PostgreSQL 属性
+    struct {
+        std::string version;         // server_version, 如 "14.5"
+        int protocol_version = 0;   // 协议版本 (196608 = 3.0)
+    } pgsql;
+
+    // MongoDB 属性
+    struct {
+        std::string version;         // version 字段, 如 "5.0.14"
+        int max_wire_version = 0;   // maxWireVersion
+        bool is_master = false;     // ismaster
+    } mongo;
+
     // 通用属性
     std::string banner;           // 服务欢迎消息
     bool banner_truncated = false; // banner是否因缓冲区满而被截断

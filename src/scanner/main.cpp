@@ -231,17 +231,10 @@ ScannerConfig load_config(const string& config_file) {
             // ===== Protocols 配置 =====
             if (j.contains("protocols")) {
                 auto p = j["protocols"];
-                if (p.contains("SMTP") && p["SMTP"].contains("enabled")) config.enable_smtp = p["SMTP"]["enabled"];
-                if (p.contains("POP3") && p["POP3"].contains("enabled")) config.enable_pop3 = p["POP3"]["enabled"];
-                if (p.contains("IMAP") && p["IMAP"].contains("enabled")) config.enable_imap = p["IMAP"]["enabled"];
-                if (p.contains("HTTP") && p["HTTP"].contains("enabled")) config.enable_http = p["HTTP"]["enabled"];
-                if (p.contains("FTP") && p["FTP"].contains("enabled")) config.enable_ftp = p["FTP"]["enabled"];
-                if (p.contains("TELNET") && p["TELNET"].contains("enabled")) config.enable_telnet = p["TELNET"]["enabled"];
-                if (p.contains("SSH") && p["SSH"].contains("enabled")) config.enable_ssh = p["SSH"]["enabled"];
-                if (p.contains("REDIS") && p["REDIS"].contains("enabled")) config.enable_redis = p["REDIS"]["enabled"];
-                if (p.contains("RTSP") && p["RTSP"].contains("enabled")) config.enable_rtsp = p["RTSP"]["enabled"];
-                if (p.contains("SIP") && p["SIP"].contains("enabled")) config.enable_sip = p["SIP"]["enabled"];
-                if (p.contains("MYSQL") && p["MYSQL"].contains("enabled")) config.enable_mysql = p["MYSQL"]["enabled"];
+                for (auto& [name, enabled] : config.protocol_enabled) {
+                    if (p.contains(name) && p[name].contains("enabled"))
+                        enabled = p[name]["enabled"];
+                }
             }
 
             // ===== DNS 配置 =====
@@ -395,7 +388,7 @@ int main(int argc, char* argv[]) {
 
             ("config,c", po::value<string>(), "Configuration file")
             ("protocols,p", po::value<string>(),
-             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH,REDIS,RTSP,SIP,MYSQL)")
+             "Comma-separated list of protocols (SMTP,POP3,IMAP,HTTP,FTP,TELNET,SSH,REDIS,RTSP,SIP,MYSQL,PGSQL,MONGO)")
             ("format,f", po::value<string>()->default_value("text"),
              "Output format (text,json,csv,report,required_format)")
             ("only-success", "Only output successful probes (hide failures)")
@@ -531,12 +524,12 @@ int main(int argc, char* argv[]) {
         if (vm["batch-size"].defaulted() == false) {
             config.batch_size = vm["batch-size"].as<int>();
         }
-        if (vm.count("no-smtp")) config.enable_smtp = false;
-        if (vm.count("no-pop3")) config.enable_pop3 = false;
-        if (vm.count("no-imap")) config.enable_imap = false;
-        if (vm.count("enable-http")) config.enable_http = true;
-        if (vm.count("enable-telnet")) config.enable_telnet = true;
-        if (vm.count("enable-ssh")) config.enable_ssh = true;
+        if (vm.count("no-smtp")) config.protocol_enabled["SMTP"] = false;
+        if (vm.count("no-pop3")) config.protocol_enabled["POP3"] = false;
+        if (vm.count("no-imap")) config.protocol_enabled["IMAP"] = false;
+        if (vm.count("enable-http")) config.protocol_enabled["HTTP"] = true;
+        if (vm.count("enable-telnet")) config.protocol_enabled["TELNET"] = true;
+        if (vm.count("enable-ssh")) config.protocol_enabled["SSH"] = true;
         if (vm.count("protocols")) {
             config.custom_protocols.clear();
             string protos = vm["protocols"].as<string>();
@@ -546,30 +539,11 @@ int main(int argc, char* argv[]) {
                 protos.erase(0, pos + 1);
             }
             config.custom_protocols.push_back(protos);
-            // 应用到启用开关：如指定协议则仅启用这些
-            config.enable_smtp = false;
-            config.enable_pop3 = false;
-            config.enable_imap = false;
-            config.enable_http = false;
-            config.enable_ftp = false;
-            config.enable_telnet = false;
-            config.enable_ssh = false;
-            config.enable_redis = false;
-            config.enable_rtsp = false;
-            config.enable_sip = false;
-            config.enable_mysql = false;
+            // 如指定协议则仅启用这些
+            for (auto& [name, enabled] : config.protocol_enabled) enabled = false;
             for (auto& p : config.custom_protocols) {
-                if (p == "SMTP") config.enable_smtp = true;
-                else if (p == "POP3") config.enable_pop3 = true;
-                else if (p == "IMAP") config.enable_imap = true;
-                else if (p == "HTTP") config.enable_http = true;
-                else if (p == "FTP") config.enable_ftp = true;
-                else if (p == "TELNET") config.enable_telnet = true;
-                else if (p == "SSH") config.enable_ssh = true;
-                else if (p == "REDIS") config.enable_redis = true;
-                else if (p == "RTSP") config.enable_rtsp = true;
-                else if (p == "SIP") config.enable_sip = true;
-                else if (p == "MYSQL") config.enable_mysql = true;
+                auto it = config.protocol_enabled.find(p);
+                if (it != config.protocol_enabled.end()) it->second = true;
             }
         }
         if (vm.count("scan-all-ports")) {

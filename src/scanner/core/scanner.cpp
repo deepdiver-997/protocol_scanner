@@ -4,17 +4,7 @@
 #include "scanner/common/io_thread_pool.h"
 #include "scanner/common/buffer_pool.h"
 #include "scanner/core/resource_guard.h"
-#include "scanner/protocols/smtp_protocol.h"
-#include "scanner/protocols/pop3_protocol.h"
-#include "scanner/protocols/imap_protocol.h"
-#include "scanner/protocols/http_protocol.h"
-#include "scanner/protocols/ftp_protocol.h"
-#include "scanner/protocols/telnet_protocol.h"
-#include "scanner/protocols/ssh_protocol.h"
-#include "scanner/protocols/redis_protocol.h"
-#include "scanner/protocols/rtsp_protocol.h"
-#include "scanner/protocols/sip_protocol.h"
-#include "scanner/protocols/mysql_protocol.h"
+#include "scanner/protocols/protocol_all.h"
 #include <nlohmann/json.hpp>
 #include <algorithm>
 #include <thread>
@@ -27,6 +17,9 @@
 #include <iterator>
 
 namespace scanner {
+
+// protocol_registry_init.cpp 中定义，强制链接器保留所有协议 .o
+void force_init_protocols();
 
 namespace fs = std::filesystem;
 
@@ -117,32 +110,18 @@ Scanner::ScanStatistics Scanner::get_statistics() const {
 
 void Scanner::init_protocols() {
     protocols_.clear();
-    if (config_.enable_smtp) protocols_.push_back(std::make_unique<SmtpProtocol>());
-    if (config_.enable_pop3) protocols_.push_back(std::make_unique<Pop3Protocol>());
-    if (config_.enable_imap) protocols_.push_back(std::make_unique<ImapProtocol>());
-    if (config_.enable_http) protocols_.push_back(std::make_unique<HttpProtocol>());
-    if (config_.enable_ftp) protocols_.push_back(std::make_unique<FtpProtocol>());
-    if (config_.enable_telnet) protocols_.push_back(std::make_unique<TelnetProtocol>());
-    if (config_.enable_ssh) protocols_.push_back(std::make_unique<SshProtocol>());
-    if (config_.enable_redis) protocols_.push_back(std::make_unique<RedisProtocol>());
-    if (config_.enable_rtsp) protocols_.push_back(std::make_unique<RtspProtocol>());
-    if (config_.enable_sip) protocols_.push_back(std::make_unique<SipProtocol>());
-    if (config_.enable_mysql) protocols_.push_back(std::make_unique<MysqlProtocol>());
+    force_init_protocols();  // 触发所有 REGISTER_PROTOCOL 静态注册
+    for (auto& [name, enabled] : config_.protocol_enabled) {
+        if (enabled) {
+            auto proto = ProtocolFactory::create(name);
+            if (proto) protocols_.push_back(std::move(proto));
+        }
+    }
 }
 
 bool Scanner::is_protocol_enabled(const std::string& name) const {
-    if (name == "SMTP") return config_.enable_smtp;
-    if (name == "POP3") return config_.enable_pop3;
-    if (name == "IMAP") return config_.enable_imap;
-    if (name == "HTTP") return config_.enable_http;
-    if (name == "FTP") return config_.enable_ftp;
-    if (name == "TELNET") return config_.enable_telnet;
-    if (name == "SSH") return config_.enable_ssh;
-    if (name == "REDIS") return config_.enable_redis;
-    if (name == "RTSP") return config_.enable_rtsp;
-    if (name == "SIP") return config_.enable_sip;
-    if (name == "MYSQL") return config_.enable_mysql;
-    return false;
+    auto it = config_.protocol_enabled.find(name);
+    return it != config_.protocol_enabled.end() && it->second;
 }
 
 std::string Scanner::preprocess_zmap(const std::string& source_path) {

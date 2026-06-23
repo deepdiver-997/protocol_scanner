@@ -225,22 +225,40 @@ MysqlHandshakeInfo parse_mysql_handshake(const char* data, size_t len) {
         info.version = info.version_string;
     }
 
-    // After version string null: 4 bytes connection ID, 8 bytes auth data...
-    size_t cap_offset = version_end + 1 + 4 + 8; // null + conn_id + auth-part1
-    if (cap_offset + 2 <= plen) {
-        info.capability_flags = static_cast<uint32_t>(
-            static_cast<uint8_t>(payload[cap_offset]) |
-            (static_cast<uint8_t>(payload[cap_offset + 1]) << 8)
-        );
+    // 偏移量基于 version 结束后的位置
+    // Payload 结构：
+    //   V+1..V+4: connection_id (4B)
+    //   V+5..V+12: auth-data-part-1 (8B)
+    //   V+13: filler (1B, 0x00)
+    //   V+14..V+15: capability_flags_1 (lower 2B)
+    //   V+16: character_set
+    //   V+17..V+18: status_flags
+    //   V+19..V+20: capability_flags_2 (upper 2B)
+    //   V+21: auth_plugin_data_len
+    //   V+22..V+31: reserved (10B)
+    //   V+32..: auth-data-part-2 (N = max(13, aplen-8) bytes)
+    //   auth_plugin_name 在 auth-data-part-2 之后
+    size_t base = version_end + 1;
+    size_t pos_cap_lower  = base + 13;
+    size_t pos_cap_upper  = base + 18;
+    size_t pos_aplen      = base + 20;
+    size_t pos_auth_part2 = base + 31;
+
+    // capability_flags: 下 2 字节 + 上 2 字节
+    if (pos_cap_upper + 2 <= plen) {
+        uint32_t cap_lower = static_cast<uint8_t>(payload[pos_cap_lower])
+                           | (static_cast<uint8_t>(payload[pos_cap_lower + 1]) << 8);
+        uint32_t cap_upper = static_cast<uint8_t>(payload[pos_cap_upper])
+                           | (static_cast<uint8_t>(payload[pos_cap_upper + 1]) << 8);
+        info.capability_flags = cap_lower | (cap_upper << 16);
     }
 
-    // Auth plugin name (at end of handshake, variable offset)
-    size_t auth_plugin_offset = version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1 + 10;
-    if (auth_plugin_offset < plen) {
-        size_t aplen = static_cast<uint8_t>(payload[version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1]);
-        if (aplen > 0) {
-            auth_plugin_offset = version_end + 1 + 4 + 8 + 2 + 1 + 2 + 2 + 1 + 10 + aplen - 8;
-            size_t ap_name_start = auth_plugin_offset + (aplen - 8);
+    // auth_plugin_name
+    if (pos_auth_part2 < plen && pos_aplen < plen) {
+        size_t aplen = static_cast<uint8_t>(payload[pos_aplen]);
+        if (aplen > 8) {
+            size_t part2_len = (aplen > 21) ? (aplen - 8) : 13;
+            size_t ap_name_start = pos_auth_part2 + part2_len;
             if (ap_name_start < plen) {
                 size_t ap_end = ap_name_start;
                 while (ap_end < plen && payload[ap_end] != '\0') ++ap_end;

@@ -1,0 +1,15 @@
+#pragma once
+// 统一 include 所有协议头，方便各模块引用
+#include "scanner/protocols/smtp_protocol.h"
+#include "scanner/protocols/pop3_protocol.h"
+#include "scanner/protocols/imap_protocol.h"
+#include "scanner/protocols/http_protocol.h"
+#include "scanner/protocols/ftp_protocol.h"
+#include "scanner/protocols/telnet_protocol.h"
+#include "scanner/protocols/ssh_protocol.h"
+#include "scanner/protocols/redis_protocol.h"
+#include "scanner/protocols/rtsp_protocol.h"
+#include "scanner/protocols/sip_protocol.h"
+#include "scanner/protocols/mysql_protocol.h"
+#include "scanner/protocols/postgresql_protocol.h"
+#include "scanner/protocols/mongodb_protocol.h"
