@@ -88,6 +88,17 @@ void HttpProtocol::async_probe(
         ctx->socket.set_option(recv_buf, set_ec);
         ctx->socket.set_option(send_buf, set_ec);
         ctx->socket.set_option(no_delay_opt, set_ec);
+
+    // 绑定到指定本地 IP（多 IP 场景下分散临时端口池）
+    if (!bind_ip.empty()) {
+        boost::system::error_code bind_ec;
+        ctx->socket.bind(tcp::endpoint(asio::ip::make_address(bind_ip, bind_ec), 0), bind_ec);
+        if (bind_ec) {
+            ctx->finish_error("Bind failed: " + bind_ec.message());
+            return;
+        }
+    }
+
     ctx->timer.async_wait([ctx](const boost::system::error_code& ec) {
         if (!ec) {
             ctx->finish_error("HTTP probe timed out");

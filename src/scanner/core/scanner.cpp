@@ -352,14 +352,17 @@ void Scanner::start(const std::string& source_path) {
     // 启动三个线程：生产者/消费者通过可注入回调执行
     //   本地模式 → 文件I/O（默认）
     //   分布式模式 → set_input_producer / set_result_consumer 替换
-    input_producer_ = [this, actual_source, has_checkpoint]() {
-        input_thread_func(actual_source, has_checkpoint);
-    };
+    if (!input_producer_) {
+        input_producer_ = [this, actual_source, has_checkpoint]() {
+            input_thread_func(actual_source, has_checkpoint);
+        };
+    }
     input_thread_ = std::thread([this]() { input_producer_(); });
     
     // 等待 input_thread 加载至少一批 targets 再启动 scan_loop
     // 大文件（如 22GB 纯 IP）首次读取需要时间，必须等待避免 scan_loop 创建 0 个 session
-    {
+    // MCP 等自定义输入模式下跳过等待（target 按需到达）
+    if (!actual_source.empty()) {
         const size_t min_targets = std::min<size_t>(config_.max_work_count, 100);
         const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
         int retries = 0;
@@ -1049,6 +1052,33 @@ void Scanner::scan_loop() {
                     io_pool_.get(), config_.probe_timeout, 1, next_bind_ip());
                 total_quota -= launched;
             } while (launched);
+        }
+
+        // 懒创建：无可复用 session 但还有 quota + 有 target → 新建 session
+        // MCP 场景下 targets 在 startup 后才到达，需要动态创建
+        if (total_quota > 0) {
+            bool has_ready = false;
+            for (const auto& s : sessions_) {
+                if (s->idle() && s->ready_to_release()) { has_ready = true; break; }
+            }
+            if (!has_ready && static_cast<int>(sessions_.size()) < max_sessions) {
+                ScanTarget t;
+                if (fetch_one_target(t)) {
+                    auto sess = std::make_unique<ScanSession>(t,
+                        dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                        config_.dns_timeout, config_.probe_timeout,
+                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                               : ScanSession::ProbeMode::ProtocolDefaults,
+                        protocols_, result_queue_);
+                    int launched = sess->start_all_pending_probes(protocols_,
+                        io_pool_.get(), config_.probe_timeout, 1, next_bind_ip());
+                    if (launched > 0) {
+                        sessions_.push_back(std::move(sess));
+                        total_quota -= launched;
+                        active_sessions++;
+                    }
+                }
+            }
         }
 
         if (input_done_ && targets_.empty() && active_sessions == 0) {

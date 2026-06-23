@@ -82,6 +82,7 @@ public:
     // 本地文件模式（默认实现，也暴露出去方便分布式实现复用部分逻辑）
     void push_targets_to_queue(ScanTarget t);
     BlockingQueue<ScanReport>& result_queue() { return result_queue_; }
+    class IoThreadPool* io_pool() const { return io_pool_.get(); }
 
     // 获取统计信息
     struct ScanStatistics {

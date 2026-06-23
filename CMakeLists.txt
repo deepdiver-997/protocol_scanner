@@ -189,6 +189,8 @@ set(SCANNER_CORE_SRCS
     ${CMAKE_SOURCE_DIR}/src/scanner/distributed/ingestor.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/openssh_probes.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/vsftpd_telnetd_probes.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/deep_probe_registry.cpp
+    ${CMAKE_SOURCE_DIR}/src/scanner/deep_probe/deep_probe_impls.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/metrics/metrics_server.cpp
     ${CMAKE_SOURCE_DIR}/src/scanner/core/resource_guard.cpp
     # ${CMAKE_SOURCE_DIR}/src/scanner/port_scanner.cpp
@@ -220,26 +222,32 @@ add_library(scanner_core STATIC ${ALL_CORE_SRCS})
 add_executable(scanner ${SCANNER_MAIN_SRC})
 add_executable(scanner_distributed ${CMAKE_SOURCE_DIR}/src/scanner/distributed_main.cpp)
 add_executable(scanner_ingest ${CMAKE_SOURCE_DIR}/src/scanner/distributed_ingest_main.cpp)
+add_executable(scanner_mcp ${CMAKE_SOURCE_DIR}/src/scanner/mcp_main.cpp)
 
 # 项目内头文件
 target_include_directories(scanner_core PUBLIC
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/OuterLib
+
 )
 
 target_include_directories(scanner PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/OuterLib
+
 )
 
 target_include_directories(scanner_distributed PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/OuterLib
+
 )
 
 target_include_directories(scanner_ingest PRIVATE
     ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_SOURCE_DIR}/OuterLib
+
+)
+
+target_include_directories(scanner_mcp PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+
 )
 
 # =====================
@@ -303,17 +311,19 @@ endif()
 target_link_libraries(scanner PRIVATE scanner_core)
 target_link_libraries(scanner_distributed PRIVATE scanner_core)
 target_link_libraries(scanner_ingest PRIVATE scanner_core)
+target_link_libraries(scanner_mcp PRIVATE scanner_core)
 
 # 要求特性
 target_compile_features(scanner_core PUBLIC cxx_std_20)
 target_compile_features(scanner PRIVATE cxx_std_20)
 target_compile_features(scanner_distributed PRIVATE cxx_std_20)
 target_compile_features(scanner_ingest PRIVATE cxx_std_20)
+target_compile_features(scanner_mcp PRIVATE cxx_std_20)
 
 # =====================
 # 安装规则
 # =====================
-install(TARGETS scanner scanner_distributed scanner_ingest RUNTIME DESTINATION bin)
+install(TARGETS scanner scanner_distributed scanner_ingest scanner_mcp RUNTIME DESTINATION bin)
 install(DIRECTORY config/ DESTINATION share/protocol-scanner/config)
 
 # =====================
