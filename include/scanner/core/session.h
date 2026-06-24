@@ -13,6 +13,7 @@
 #include <queue>
 #include <mutex>
 #include <string>
+#include <functional>
 
 namespace scanner {
 
@@ -20,6 +21,9 @@ namespace asio = boost::asio;
 
 class ScanSession {
 public:
+    // session 完成当前 target 所有 probe 后回调，自行取新 target + 重启
+    using RestartFunc = std::function<void(ScanSession*)>;
+
     enum class ProbeMode {
         AllAvailable,
         ProtocolDefaults
@@ -62,6 +66,9 @@ public:
     void set_error(const std::string& msg) { error_msg_ = msg; }
     std::string error_msg() const { return error_msg_; }
 
+    // ====== 回调驱动重启 ======
+    void set_on_restart(RestartFunc cb) { on_restart_ = std::move(cb); }
+
     // ====== 启动探测 ======
     int start_all_pending_probes(
         const std::vector<std::unique_ptr<IProtocol>>& protocols,
@@ -95,6 +102,8 @@ private:
     std::atomic<std::size_t> tasks_completed_{0};
     std::atomic<uint64_t> generation_{0};
     int io_context_idx_{-1};
+
+    RestartFunc on_restart_;
 
     bool only_success_{false};
 };

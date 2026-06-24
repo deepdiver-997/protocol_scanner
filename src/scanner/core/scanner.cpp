@@ -378,13 +378,10 @@ void Scanner::start(const std::string& source_path) {
             snap.pending_reports_size = pending_reports_count_.load();
             snap.io_pool_loads = io_pool_->io_loads();
 
-            // 会话
+            // 会话 — 用原子计数器，不再遍历全部 session
             snap.total_sessions = sessions_.size();
-            size_t active = 0;
-            for (const auto& s : sessions_) {
-                if (s && !s->idle()) ++active;
-            }
-            snap.active_sessions = active;
+            snap.active_sessions = static_cast<size_t>(
+                active_session_count_.load(std::memory_order_relaxed));
 
             // 进度
             snap.processed_count  = processed_count_.load();
@@ -932,140 +929,150 @@ void Scanner::result_handler_thread() {
 
 void Scanner::scan_loop() {
     std::cout << "Scan loop started." << std::endl;
+    // ===== 回调驱动架构：session 自己取 target + 重启，scan_loop 只负责等待 =====
+
     auto last_mem_log = std::chrono::steady_clock::now();
 
-    // 计算每个 session 最多占用几个端口（用于 session 数 vs 连接数的换算）
+    // 计算 max_sessions
     int ports_per_session = 0;
     for (const auto& p : protocols_) {
         if (p) ports_per_session += static_cast<int>(p->default_ports().size());
     }
     if (ports_per_session == 0) ports_per_session = 1;
-
-    // max_work_count 是连接数上限，除以每 session 端口数得到 session 数上限
     int work_count = config_.max_work_count > 0
         ? static_cast<int>(config_.max_work_count) : std::max(1, config_.batch_size);
     int max_sessions = std::max(1, work_count / ports_per_session);
     sessions_.reserve(max_sessions);
 
     std::cout << "[scan_loop] ports_per_session=" << ports_per_session
-              << " max_work=" << work_count << " max_sessions=" << max_sessions << std::endl;
+              << " max_work=" << work_count << " max_sessions=" << max_sessions
+              << " callback_driven" << std::endl;
 
-    auto fetch_one_target = [this](ScanTarget& out) -> bool {
-        std::lock_guard<SpinLock> lock(targets_lock_);
-        if (targets_.empty()) return false;
-        out = std::move(targets_.front());
-        targets_.pop_front();
-        return true;
+    // 活跃 session 计数，用于检测扫描完成
+    // session 完成回调：取新 target → 重启 probe
+    // std::function 引用捕获支持递归——声明先于赋值，lambda 内通过引用调自己
+    ScanSession::RestartFunc on_restart;
+    on_restart = [this, &on_restart](ScanSession* s) {
+        if (stop_.load(std::memory_order_acquire)) {
+            active_session_count_.fetch_sub(1, std::memory_order_relaxed);
+            return;
+        }
+
+        ScanTarget t;
+        {
+            std::lock_guard<SpinLock> lock(targets_lock_);
+            if (!targets_.empty()) {
+                t = std::move(targets_.front());
+                targets_.pop_front();
+            }
+        }
+        if (t.ip_uint == 0 && t.domain.empty()) {
+            if (input_done_) {
+                active_session_count_.fetch_sub(1, std::memory_order_relaxed);
+                return;
+            }
+            // 队列暂时空（targets 还在加载中 / MCP 等待请求）
+            // post 到 io_context，等池子里有空了会自动调度到
+            asio::post(io_pool_->executor_for(0),
+                       [this, s, &on_restart]() {
+                on_restart(s);
+            });
+            return;
+        }
+
+        std::string bind_ip;
+        if (!config_.bind_ips.empty()) {
+            size_t idx = bind_ip_rr_.fetch_add(1, std::memory_order_relaxed) % config_.bind_ips.size();
+            bind_ip = config_.bind_ips[idx];
+        }
+
+        s->reset(std::move(t),
+            config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                   : ScanSession::ProbeMode::ProtocolDefaults,
+            protocols_);
+        s->start_all_pending_probes(protocols_, io_pool_.get(),
+            config_.probe_timeout, INT_MAX, bind_ip);
     };
 
-    auto next_bind_ip = [this]() -> std::string {
-        if (config_.bind_ips.empty()) return "";
-        size_t idx = bind_ip_rr_.fetch_add(1, std::memory_order_relaxed) % config_.bind_ips.size();
-        return config_.bind_ips[idx];
-    };
-
-    auto cal_quota = [this]() -> int {
-        // 基于 io_pool 实时负载计算可启动的 probe 数（每个 probe = 1 个临时端口）
-        auto loads = io_pool_->io_loads();
-        size_t total = 0;
-        for (auto l : loads) total += l;
-        if (total >= config_.max_work_count) return 0;
-        return static_cast<int>(config_.max_work_count - total);
-    };
-
-    // 一次性创建所有 session（start() 已等待 targets 就绪，这里必能取到）
+    // 预创建全部 session + 立即启动
     for (int i = 0; i < max_sessions; ++i) {
         ScanTarget t;
-        if (!fetch_one_target(t)) break;
+        {
+            std::lock_guard<SpinLock> lock(targets_lock_);
+            if (targets_.empty()) break;
+            t = std::move(targets_.front());
+            targets_.pop_front();
+        }
+        std::string bind_ip;
+        if (!config_.bind_ips.empty()) {
+            size_t idx = bind_ip_rr_.fetch_add(1, std::memory_order_relaxed) % config_.bind_ips.size();
+            bind_ip = config_.bind_ips[idx];
+        }
         auto sess = std::make_unique<ScanSession>(t,
             dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
             config_.dns_timeout, config_.probe_timeout,
             config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
                                    : ScanSession::ProbeMode::ProtocolDefaults,
             protocols_, result_queue_);
-        // 这里只创建，启动逻辑统一放到后面的循环
-        // int ctx_idx = io_pool_->acquire_context();
-        // sess->set_io_context_idx(ctx_idx);
-        // sess->start_all_pending_probes(protocols_,
-        //     io_pool_.get(), config_.probe_timeout, INT_MAX, next_bind_ip());
-        sessions_.push_back(std::move(sess));
+        sess->set_on_restart(on_restart);
+        int launched = sess->start_all_pending_probes(protocols_,
+            io_pool_.get(), config_.probe_timeout, INT_MAX, bind_ip);
+        if (launched > 0) {
+            active_session_count_.fetch_add(1, std::memory_order_relaxed);
+            sessions_.push_back(std::move(sess));
+        }
     }
-    std::cout << "[scan_loop] Created " << sessions_.size() << " sessions" << std::endl;
+    std::cout << "[scan_loop] Created " << sessions_.size()
+              << " active sessions, callback-driven" << std::endl;
 
-    while (true) {
+    // 等待 — probe 的回调链自己驱动 session 生命周期
+    while (!stop_) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+        // 懒创建：MCP 等按需模式 targets 在启动后才到达
+        if (!input_done_ && static_cast<int>(sessions_.size()) < max_sessions) {
+            ScanTarget t;
+            {
+                std::lock_guard<SpinLock> lock(targets_lock_);
+                if (!targets_.empty()) {
+                    t = std::move(targets_.front());
+                    targets_.pop_front();
+                }
+            }
+            if (t.ip_uint != 0 || !t.domain.empty()) {
+                std::string bind_ip;
+                if (!config_.bind_ips.empty()) {
+                    size_t idx = bind_ip_rr_.fetch_add(1, std::memory_order_relaxed) % config_.bind_ips.size();
+                    bind_ip = config_.bind_ips[idx];
+                }
+                auto sess = std::make_unique<ScanSession>(t,
+                    dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
+                    config_.dns_timeout, config_.probe_timeout,
+                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
+                                           : ScanSession::ProbeMode::ProtocolDefaults,
+                    protocols_, result_queue_);
+                sess->set_on_restart(on_restart);
+                int launched = sess->start_all_pending_probes(protocols_,
+                    io_pool_.get(), config_.probe_timeout, INT_MAX, bind_ip);
+                if (launched > 0) {
+                    active_session_count_.fetch_add(1, std::memory_order_relaxed);
+                    sessions_.push_back(std::move(sess));
+                }
+            }
+        }
+
+        // 定期日志
         auto now = std::chrono::steady_clock::now();
         if (std::chrono::duration_cast<std::chrono::seconds>(now - last_mem_log).count() >= 10) {
-            LOG_CORE_DEBUG("[scan_loop] sessions={} targets={} result_queue={}",
-                sessions_.size(), targets_.size(), result_queue_.size());
+            LOG_CORE_DEBUG("[scan_loop] sessions={} targets={} active_session_count={}",
+                sessions_.size(), targets_.size(), active_session_count_.load());
             last_mem_log = now;
         }
 
-        int active_sessions = 0;
-        int total_quota = cal_quota();
-
-        // 遍历所有 session，完成的就取新 target 重用
-        for (auto& s : sessions_) {
-            if (total_quota <= 0) break;
-            if (!s || (s->idle() && !s->ready_to_release())) { active_sessions++; continue; }
-            active_sessions++;
-            
-            ScanTarget t;
-            if (s->ready_to_release())
-                if (fetch_one_target(t)) {
-                // int ctx_idx = io_pool_->acquire_context();
-                // s->set_io_context_idx(ctx_idx);
-                s->reset(std::move(t),
-                    config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
-                                            : ScanSession::ProbeMode::ProtocolDefaults,
-                    protocols_);
-                } else {
-                    // 队列空，保持 ready_to_release 状态等下一轮
-                    active_sessions--;
-                }
-            
-            int launched = 0;
-            do {
-                // 释放旧 context 负载
-                // io_pool_->release_context(s->io_context_idx());  // 让回调结束去释放
-                launched = s->start_all_pending_probes(protocols_,
-                    io_pool_.get(), config_.probe_timeout, 1, next_bind_ip());
-                total_quota -= launched;
-            } while (launched);
-        }
-
-        // 懒创建：无可复用 session 但还有 quota + 有 target → 新建 session
-        // MCP 场景下 targets 在 startup 后才到达，需要动态创建
-        if (total_quota > 0) {
-            bool has_ready = false;
-            for (const auto& s : sessions_) {
-                if (s->idle() && s->ready_to_release()) { has_ready = true; break; }
-            }
-            if (!has_ready && static_cast<int>(sessions_.size()) < max_sessions) {
-                ScanTarget t;
-                if (fetch_one_target(t)) {
-                    auto sess = std::make_unique<ScanSession>(t,
-                        dns_resolver_ ? std::shared_ptr<IDnsResolver>(dns_resolver_.get(), [](IDnsResolver*){}) : nullptr,
-                        config_.dns_timeout, config_.probe_timeout,
-                        config_.scan_all_ports ? ScanSession::ProbeMode::AllAvailable
-                                               : ScanSession::ProbeMode::ProtocolDefaults,
-                        protocols_, result_queue_);
-                    int launched = sess->start_all_pending_probes(protocols_,
-                        io_pool_.get(), config_.probe_timeout, 1, next_bind_ip());
-                    if (launched > 0) {
-                        sessions_.push_back(std::move(sess));
-                        total_quota -= launched;
-                        active_sessions++;
-                    }
-                }
-            }
-        }
-
-        if (input_done_ && targets_.empty() && active_sessions == 0) {
+        if (input_done_ && active_session_count_.load(std::memory_order_acquire) == 0) {
             LOG_CORE_DEBUG("Scan loop: all done, exiting");
             break;
         }
-
-        std::this_thread::sleep_for(std::chrono::milliseconds(5));
     }
 
     scan_done_ = true;

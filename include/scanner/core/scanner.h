@@ -146,6 +146,7 @@ private:
     std::atomic<bool> stop_{false};
     std::atomic<bool> input_done_{false};
     std::atomic<bool> scan_done_{false};
+    std::atomic<int> active_session_count_{0};  // 回调驱动架构的活跃 session 计数
     std::ofstream report_ofs_;
     bool header_written_{false};
 

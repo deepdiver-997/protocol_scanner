@@ -201,6 +201,9 @@ int ScanSession::start_all_pending_probes(
                         rep.protocols = std::move(results_);
                     }
                     grq->push(std::move(rep));
+
+                    // 回调驱动重启：session 自己取新 target 继续干活，不再等 scan_loop 来 poll
+                    if (on_restart_) on_restart_(this);
                 }
             },
             bind_ip
