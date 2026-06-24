@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <atomic>
 #include <thread>
+#include <chrono>
 
 #include <boost/asio/ip/tcp.hpp>
 
@@ -41,6 +42,8 @@ struct MetricsSnapshot {
 // 极简 HTTP 服务，只响应 GET /metrics → JSON
 class MetricsServer {
 public:
+    using SnapshotProvider = std::function<MetricsSnapshot()>;
+
     MetricsServer();
     ~MetricsServer();
 
@@ -48,7 +51,9 @@ public:
     void start(uint16_t port = 9080);
     void stop();
 
-    // 更新快照（由 scanner 主线程定期调用）
+    // 设置快照供应回调 — scanner 设置后，请求驱动采样，不用轮询线程
+    void set_snapshot_provider(SnapshotProvider prov);
+    // 外部主动更新（兼容旧接口，provider 未设置时用）
     void update_snapshot(const MetricsSnapshot& s);
 
 private:
@@ -59,9 +64,14 @@ private:
     std::unique_ptr<boost::asio::ip::tcp::acceptor> acceptor_;
     std::unique_ptr<std::thread> thread_;
 
+    SnapshotProvider provider_;
     MetricsSnapshot snapshot_;
     mutable std::mutex mutex_;
     std::atomic<bool> running_{false};
+
+    // 冷却计时
+    std::chrono::steady_clock::time_point last_sample_;
+    static constexpr auto kCooldown = std::chrono::seconds(2);
 };
 
 } // namespace scanner

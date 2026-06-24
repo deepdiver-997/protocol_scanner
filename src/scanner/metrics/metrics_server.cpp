@@ -50,12 +50,34 @@ void MetricsServer::stop() {
     acceptor_.reset();
 }
 
+void MetricsServer::set_snapshot_provider(SnapshotProvider prov) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    provider_ = std::move(prov);
+}
+
 void MetricsServer::update_snapshot(const MetricsSnapshot& s) {
     std::lock_guard<std::mutex> lock(mutex_);
     snapshot_ = s;
+    last_sample_ = std::chrono::steady_clock::now();
 }
 
 std::string MetricsServer::build_json() {
+    // 按需采样：如果有 provider，检查冷却时间
+    {
+        std::unique_lock<std::mutex> lock(mutex_);
+        if (provider_) {
+            auto now = std::chrono::steady_clock::now();
+            if (now - last_sample_ > kCooldown) {
+                SnapshotProvider prov = provider_;
+                lock.unlock();  // 放锁采样，避免长时间持锁
+                MetricsSnapshot fresh = prov();
+                lock.lock();
+                snapshot_ = std::move(fresh);
+                last_sample_ = std::chrono::steady_clock::now();
+            }
+        }
+    }
+
     MetricsSnapshot s;
     {
         std::lock_guard<std::mutex> lock(mutex_);
@@ -105,14 +127,12 @@ void MetricsServer::accept_loop() {
             tcp::socket socket(io_ctx_);
             acceptor_->accept(socket);
 
-            // 读取请求（简单 recv，最多 4KB）
             char buf[4096];
             ssize_t n = recv(socket.native_handle(), buf, sizeof(buf) - 1, 0);
             if (n <= 0) { socket.close(); continue; }
             buf[n] = '\0';
             std::string request(buf, n);
 
-            // 只处理 GET /metrics
             static const std::regex metrics_re(R"(GET /metrics HTTP/\d\.\d)");
             std::string response;
             if (std::regex_search(request, metrics_re)) {

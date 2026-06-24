@@ -95,12 +95,12 @@ void ScanSession::init_protocol_queues(const std::vector<std::unique_ptr<IProtoc
     protocol_port_queues_.clear();
     for (const auto& p : protocols) {
         if (!p) continue;
-        protocol_port_queues_[p->name()] = std::queue<Port>();
+        protocol_port_queues_[std::string(p->name())] = std::queue<Port>();
     }
     if (available_ports_.empty()) return;
     for (const auto& p : protocols) {
         if (!p) continue;
-        auto& q = protocol_port_queues_[p->name()];
+        auto& q = protocol_port_queues_[std::string(p->name())];
         if (probe_mode_ == ProbeMode::ProtocolDefaults) {
             for (auto d : p->default_ports()) {
                 if (std::find(available_ports_.begin(), available_ports_.end(), d) != available_ports_.end()) {

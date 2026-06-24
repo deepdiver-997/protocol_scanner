@@ -156,8 +156,8 @@ private:
 
     // metrics
     MetricsServer metrics_server_;
-    std::unique_ptr<std::thread> metrics_thread_;
     std::chrono::steady_clock::time_point metrics_start_time_;
+    std::chrono::steady_clock::time_point metrics_last_sample_time_{};
     uint64_t metrics_last_processed_{0};
     std::atomic<size_t> pending_reports_count_{0};  // updated by result_handler
 

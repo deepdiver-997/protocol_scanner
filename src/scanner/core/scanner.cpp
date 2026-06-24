@@ -76,7 +76,6 @@ Scanner::Scanner(const ScannerConfig& config)
 Scanner::~Scanner() {
     stop();
     metrics_server_.stop();
-    if (metrics_thread_ && metrics_thread_->joinable()) metrics_thread_->join();
     if (input_thread_.joinable()) input_thread_.join();
     if (result_thread_.joinable()) result_thread_.join();
     if (scan_thread_.joinable()) scan_thread_.join();
@@ -328,6 +327,34 @@ void Scanner::start(const std::string& source_path) {
         // deque 不需要 reserve，自动按块分配
     }
     
+    // ===== preflight：配置合法性检查 =====
+    if (!config_.bind_ips.empty()) {
+        for (const auto& ip_str : config_.bind_ips) {
+            boost::system::error_code ec;
+            auto addr = asio::ip::make_address(ip_str, ec);
+            if (ec) {
+                std::cerr << "FATAL: bind_ip '" << ip_str << "' is not a valid IP address" << std::endl;
+                input_done_ = true; scan_done_ = true;
+                reports_cv_.notify_all();
+                return;
+            }
+            // 直接尝试 bind 验证本机是否有此 IP
+            asio::io_context tmp_ctx;
+            asio::ip::tcp::socket sock(tmp_ctx);
+            sock.open(asio::ip::tcp::v4(), ec);
+            if (!ec) sock.bind(asio::ip::tcp::endpoint(addr, 0), ec);
+            if (ec) {
+                std::cerr << "FATAL: bind_ip '" << ip_str
+                          << "' not available on this machine: " << ec.message() << std::endl;
+                input_done_ = true; scan_done_ = true;
+                reports_cv_.notify_all();
+                return;
+            }
+            sock.close(ec);
+        }
+        LOG_CORE_INFO("[preflight] bind_ips validated: {} addresses", config_.bind_ips.size());
+    }
+
     // 启动三个线程：生产者/消费者通过可注入回调执行
     //   本地模式 → 文件I/O（默认）
     //   分布式模式 → set_input_producer / set_result_consumer 替换
@@ -364,49 +391,44 @@ void Scanner::start(const std::string& source_path) {
     scan_thread_ = std::thread([this]() { scan_loop(); });
     result_thread_ = std::thread([this]() { result_consumer_(); });
 
-    // 启动 metrics HTTP 服务
+    // 启动 metrics HTTP 服务 — 请求驱动采样，无专用轮询线程
     metrics_start_time_ = std::chrono::steady_clock::now();
     metrics_server_.start(config_.metrics_port);
-    metrics_thread_ = std::make_unique<std::thread>([this]() {
-        while (!stop_) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
+    metrics_server_.set_snapshot_provider([this]() -> MetricsSnapshot {
+        MetricsSnapshot snap;
+        snap.targets_queue_size = targets_.size();
+        snap.result_queue_size  = result_queue_.size();
+        snap.pending_reports_size = pending_reports_count_.load();
+        snap.io_pool_loads = io_pool_->io_loads();
 
-            MetricsSnapshot snap;
-            // 队列
-            snap.targets_queue_size = targets_.size();
-            snap.result_queue_size  = result_queue_.size();
-            snap.pending_reports_size = pending_reports_count_.load();
-            snap.io_pool_loads = io_pool_->io_loads();
+        snap.total_sessions = sessions_.size();
+        snap.active_sessions = static_cast<size_t>(
+            active_session_count_.load(std::memory_order_relaxed));
 
-            // 会话 — 用原子计数器，不再遍历全部 session
-            snap.total_sessions = sessions_.size();
-            snap.active_sessions = static_cast<size_t>(
-                active_session_count_.load(std::memory_order_relaxed));
+        snap.processed_count  = processed_count_.load();
+        snap.successful_count = successful_ips_.load();
 
-            // 进度
-            snap.processed_count  = processed_count_.load();
-            snap.successful_count = successful_ips_.load();
-
-            // 速率 (每秒处理的增量)
-            uint64_t delta = snap.processed_count - metrics_last_processed_;
-            metrics_last_processed_ = snap.processed_count;
-            snap.targets_per_sec = static_cast<double>(delta);
-
-            // 运行时间
-            snap.uptime_sec = static_cast<uint64_t>(
-                std::chrono::duration_cast<std::chrono::seconds>(
-                    std::chrono::steady_clock::now() - metrics_start_time_).count());
-
-            // 协议计数
-            {
-                std::lock_guard<std::mutex> lock(stats_mutex_);
-                for (const auto& [name, count] : protocol_success_counts_) {
-                    snap.protocol_success_counts.emplace_back(name, count);
-                }
-            }
-
-            metrics_server_.update_snapshot(snap);
+        // 速率：基于实际时间间隔计算，避免波动
+        auto now = std::chrono::steady_clock::now();
+        uint64_t delta = snap.processed_count - metrics_last_processed_;
+        double elapsed = std::chrono::duration<double>(now - metrics_last_sample_time_).count();
+        if (elapsed > 0.5) {
+            snap.targets_per_sec = static_cast<double>(delta) / elapsed;
         }
+        metrics_last_processed_ = snap.processed_count;
+        metrics_last_sample_time_ = now;
+
+        snap.uptime_sec = static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::seconds>(
+                now - metrics_start_time_).count());
+
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            for (const auto& [name, count] : protocol_success_counts_) {
+                snap.protocol_success_counts.emplace_back(name, count);
+            }
+        }
+        return snap;
     });
 
     LOG_CORE_INFO("Scanner started with input source: {}", actual_source);
@@ -953,6 +975,9 @@ void Scanner::scan_loop() {
     // std::function 引用捕获支持递归——声明先于赋值，lambda 内通过引用调自己
     ScanSession::RestartFunc on_restart;
     on_restart = [this, &on_restart](ScanSession* s) {
+        // is_last (session.cpp:fetch_add) 已保证本 session 只有最后一个
+        // 完成的 probe 回调会进这里，不需要额外交替锁。
+
         if (stop_.load(std::memory_order_acquire)) {
             active_session_count_.fetch_sub(1, std::memory_order_relaxed);
             return;
@@ -971,10 +996,11 @@ void Scanner::scan_loop() {
                 active_session_count_.fetch_sub(1, std::memory_order_relaxed);
                 return;
             }
-            // 队列暂时空（targets 还在加载中 / MCP 等待请求）
-            // post 到 io_context，等池子里有空了会自动调度到
-            asio::post(io_pool_->executor_for(0),
-                       [this, s, &on_restart]() {
+            // 队列暂时空 → round-robin 选 context 重试
+            int ctx = io_pool_->acquire_context();
+            asio::post(io_pool_->executor_for(ctx),
+                       [this, s, &on_restart, ctx, io_pool = io_pool_.get()]() {
+                io_pool->release_context(ctx);
                 on_restart(s);
             });
             return;
