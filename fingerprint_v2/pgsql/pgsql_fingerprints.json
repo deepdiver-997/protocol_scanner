@@ -92,6 +92,28 @@
       "sample_count": 14
     },
     {
+      "id": "pgsql.protocol.ssl-request-response",
+      "category": "protocol_identity",
+      "name": "PostgreSQL SSLRequest response",
+      "description": "Matches one-byte SSLRequest responses captured by the online reprobe tool.",
+      "match": {
+        "field_regex": {
+          "banner": "^SSLRequest:[SN]"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "PGSQL",
+        "response_type": "SSLRequest"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "SSLRequest response"
+      ],
+      "notes": "This rule is expected for online reprobe output and may have zero count in offline corpora.",
+      "sample_count": 0
+    },
+    {
       "id": "pgsql.extract.sqlstate",
       "category": "field_extraction",
       "name": "SQLSTATE extractor",

@@ -7,7 +7,9 @@
 - `pgsql_fingerprints.json`：核心指纹规则库。
 - `fingerprint_schema.json`：规则库格式说明。
 - `tools/match_pgsql_fingerprints.py`：对单条 scanner `protocols[]` 结果做匹配。
+- `tools/online_pgsql_reprobe.py`：授权后随机抽样公网目标，发送 SSLRequest/最小 StartupMessage 并在线匹配。
 - `reports/validation_report.md`：全量样本与 10% 真实 IP 留出集测试结果。
+- `reports/online_reprobe_20260625.md`：2026-06-25 在线重探测摘要。
 - `reports/observed_errors.csv`：高频 SQLSTATE 和错误消息统计。
 
 原始扫描文件、原始 IP 列表不提交。
@@ -41,5 +43,13 @@
 - 协议识别：100.0%
 - SQLSTATE 提取：88.78%
 - 实现线索识别：30.24%
+
+在线重探测：
+
+- 抽样方式：完整 10% 随机 IP 样本，205 个 IP:port
+- 主动行为：先发送 SSLRequest；非 TLS 响应时只发送最小 StartupMessage，不发送密码，不执行 SQL
+- 有响应目标：189 / 205
+- 响应目标协议匹配：100.0%
+- 响应目标 SQLSTATE 提取：11.11%
 
 注意：这批 PGSQL 结果主要是 PostgreSQL wire ErrorResponse / Authentication 响应，基本不暴露服务器版本，因此版本提取不是当前库的目标。
