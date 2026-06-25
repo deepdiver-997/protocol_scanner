@@ -1,0 +1,842 @@
+{
+  "full_corpus": {
+    "record_count": 422199,
+    "metrics": {
+      "protocol_match": {
+        "count": 422199,
+        "percent": 100.0
+      },
+      "implementation_match": {
+        "count": 422198,
+        "percent": 100.0
+      },
+      "version_extraction": {
+        "count": 422199,
+        "percent": 100.0
+      },
+      "sqlstate_extraction": {
+        "count": 0,
+        "percent": 0.0
+      }
+    },
+    "rule_counts": [
+      {
+        "id": "mysql.protocol.handshake-v10",
+        "count": 422199,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.extract.version",
+        "count": 422199,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.capability.flags-observed",
+        "count": 422199,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.extract.major",
+        "count": 422198,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.auth.plugin-observed",
+        "count": 415196,
+        "percent": 98.34
+      },
+      {
+        "id": "mysql.impl.mysql-compatible-default",
+        "count": 314689,
+        "percent": 74.54
+      },
+      {
+        "id": "mysql.impl.mariadb",
+        "count": 105407,
+        "percent": 24.97
+      },
+      {
+        "id": "mysql.dist.ubuntu",
+        "count": 82508,
+        "percent": 19.54
+      },
+      {
+        "id": "mysql.runtime.log-enabled",
+        "count": 47431,
+        "percent": 11.23
+      },
+      {
+        "id": "mysql.dist.cloudlinux",
+        "count": 35847,
+        "percent": 8.49
+      },
+      {
+        "id": "mysql.dist.debian",
+        "count": 13047,
+        "percent": 3.09
+      },
+      {
+        "id": "mysql.dist.azure",
+        "count": 12334,
+        "percent": 2.92
+      },
+      {
+        "id": "mysql.impl.percona",
+        "count": 2078,
+        "percent": 0.49
+      },
+      {
+        "id": "mysql.impl.tidb",
+        "count": 24,
+        "percent": 0.01
+      }
+    ],
+    "category_coverage": [
+      {
+        "category": "auth_metadata",
+        "count": 415196,
+        "percent": 98.34
+      },
+      {
+        "category": "capability_metadata",
+        "count": 422199,
+        "percent": 100.0
+      },
+      {
+        "category": "distribution_hint",
+        "count": 131402,
+        "percent": 31.12
+      },
+      {
+        "category": "implementation",
+        "count": 422198,
+        "percent": 100.0
+      },
+      {
+        "category": "protocol_identity",
+        "count": 422199,
+        "percent": 100.0
+      },
+      {
+        "category": "provider_hint",
+        "count": 12334,
+        "percent": 2.92
+      },
+      {
+        "category": "runtime_hint",
+        "count": 47431,
+        "percent": 11.23
+      },
+      {
+        "category": "version_extraction",
+        "count": 422199,
+        "percent": 100.0
+      }
+    ],
+    "top_extracted_values": {
+      "version": [
+        {
+          "value": "5.7.44-48",
+          "count": 94974
+        },
+        {
+          "value": "5.7.23-23",
+          "count": 63448
+        },
+        {
+          "value": "5.5.5-10.11.17-MariaDB-cll-lve",
+          "count": 29226
+        },
+        {
+          "value": "8.0.46-0ubuntu0.22.04.3",
+          "count": 23388
+        },
+        {
+          "value": "5.7.44-log",
+          "count": 22846
+        },
+        {
+          "value": "5.5.5-10.6.27-MariaDB",
+          "count": 21430
+        },
+        {
+          "value": "8.0.46-0ubuntu0.24.04.3",
+          "count": 21158
+        },
+        {
+          "value": "8.0.44",
+          "count": 16244
+        },
+        {
+          "value": "5.5.5-10.11.16-MariaDB-cll-lve",
+          "count": 15178
+        },
+        {
+          "value": "5.7.44",
+          "count": 14812
+        },
+        {
+          "value": "8.0.46-0ubuntu0.24.04.2",
+          "count": 14328
+        },
+        {
+          "value": "8.0.46-0ubuntu0.22.04.2",
+          "count": 14276
+        },
+        {
+          "value": "8.0.44-azure",
+          "count": 13974
+        },
+        {
+          "value": "8.0.46",
+          "count": 13844
+        },
+        {
+          "value": "8.0.42-0ubuntu0.20.04.1",
+          "count": 13780
+        },
+        {
+          "value": "9.6.0",
+          "count": 13342
+        },
+        {
+          "value": "8.0.36",
+          "count": 11398
+        },
+        {
+          "value": "5.5.68-MariaDB",
+          "count": 9128
+        },
+        {
+          "value": "8.0.36-2ubuntu3",
+          "count": 8792
+        },
+        {
+          "value": "5.7.44-azure-log",
+          "count": 8724
+        },
+        {
+          "value": "8.0.24",
+          "count": 8034
+        },
+        {
+          "value": "5.5.5-10.11.14-MariaDB-0+deb12u2",
+          "count": 7688
+        },
+        {
+          "value": "5.5.5-10.6.27-MariaDB-cll-lve",
+          "count": 7648
+        },
+        {
+          "value": "9.5.0",
+          "count": 6974
+        },
+        {
+          "value": "8.0.45",
+          "count": 6488
+        },
+        {
+          "value": "8.0.31-google",
+          "count": 5864
+        },
+        {
+          "value": "5.7.33-0ubuntu0.16.04.1",
+          "count": 5560
+        },
+        {
+          "value": "8.0.42",
+          "count": 5256
+        },
+        {
+          "value": "8.4.8",
+          "count": 4916
+        },
+        {
+          "value": "5.7.40-log",
+          "count": 4858
+        }
+      ],
+      "major_version": [
+        {
+          "value": "5",
+          "count": 252321
+        },
+        {
+          "value": "8",
+          "count": 146467
+        },
+        {
+          "value": "9",
+          "count": 12106
+        },
+        {
+          "value": "11",
+          "count": 9488
+        },
+        {
+          "value": "12",
+          "count": 1286
+        },
+        {
+          "value": "4",
+          "count": 318
+        },
+        {
+          "value": "3",
+          "count": 152
+        },
+        {
+          "value": "23",
+          "count": 35
+        },
+        {
+          "value": "10",
+          "count": 11
+        },
+        {
+          "value": "6",
+          "count": 8
+        },
+        {
+          "value": "24",
+          "count": 3
+        },
+        {
+          "value": "25",
+          "count": 2
+        },
+        {
+          "value": "13",
+          "count": 1
+        }
+      ],
+      "auth_plugin": [
+        {
+          "value": "_password",
+          "count": 415157
+        },
+        {
+          "value": "ve_password",
+          "count": 23
+        },
+        {
+          "value": "password",
+          "count": 8
+        },
+        {
+          "value": "e_password",
+          "count": 3
+        },
+        {
+          "value": "ord",
+          "count": 3
+        },
+        {
+          "value": "mysql_native_password",
+          "count": 1
+        },
+        {
+          "value": "h",
+          "count": 1
+        }
+      ],
+      "capability_flags": [
+        {
+          "value": "65280",
+          "count": 316937
+        },
+        {
+          "value": "65024",
+          "count": 101171
+        },
+        {
+          "value": "11264",
+          "count": 2216
+        },
+        {
+          "value": "57088",
+          "count": 1457
+        },
+        {
+          "value": "12032",
+          "count": 136
+        },
+        {
+          "value": "3840",
+          "count": 64
+        },
+        {
+          "value": "2048",
+          "count": 46
+        },
+        {
+          "value": "0",
+          "count": 21
+        },
+        {
+          "value": "36608",
+          "count": 20
+        },
+        {
+          "value": "61184",
+          "count": 18
+        },
+        {
+          "value": "3328",
+          "count": 17
+        },
+        {
+          "value": "3072",
+          "count": 15
+        },
+        {
+          "value": "56832",
+          "count": 14
+        },
+        {
+          "value": "28416",
+          "count": 13
+        },
+        {
+          "value": "2304",
+          "count": 12
+        },
+        {
+          "value": "10752",
+          "count": 8
+        },
+        {
+          "value": "35072",
+          "count": 7
+        },
+        {
+          "value": "24320",
+          "count": 7
+        },
+        {
+          "value": "44800",
+          "count": 5
+        },
+        {
+          "value": "18688",
+          "count": 4
+        },
+        {
+          "value": "256",
+          "count": 3
+        },
+        {
+          "value": "1280",
+          "count": 3
+        },
+        {
+          "value": "65390",
+          "count": 2
+        },
+        {
+          "value": "11520",
+          "count": 1
+        },
+        {
+          "value": "7680",
+          "count": 1
+        },
+        {
+          "value": "512",
+          "count": 1
+        }
+      ]
+    },
+    "unmatched_examples": []
+  },
+  "holdout_10pct": {
+    "record_count": 42220,
+    "metrics": {
+      "protocol_match": {
+        "count": 42220,
+        "percent": 100.0
+      },
+      "implementation_match": {
+        "count": 42220,
+        "percent": 100.0
+      },
+      "version_extraction": {
+        "count": 42220,
+        "percent": 100.0
+      },
+      "sqlstate_extraction": {
+        "count": 0,
+        "percent": 0.0
+      }
+    },
+    "rule_counts": [
+      {
+        "id": "mysql.protocol.handshake-v10",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.extract.version",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.extract.major",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.capability.flags-observed",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "id": "mysql.auth.plugin-observed",
+        "count": 41498,
+        "percent": 98.29
+      },
+      {
+        "id": "mysql.impl.mysql-compatible-default",
+        "count": 31322,
+        "percent": 74.19
+      },
+      {
+        "id": "mysql.impl.mariadb",
+        "count": 10673,
+        "percent": 25.28
+      },
+      {
+        "id": "mysql.dist.ubuntu",
+        "count": 8294,
+        "percent": 19.64
+      },
+      {
+        "id": "mysql.runtime.log-enabled",
+        "count": 4708,
+        "percent": 11.15
+      },
+      {
+        "id": "mysql.dist.cloudlinux",
+        "count": 3624,
+        "percent": 8.58
+      },
+      {
+        "id": "mysql.dist.debian",
+        "count": 1323,
+        "percent": 3.13
+      },
+      {
+        "id": "mysql.dist.azure",
+        "count": 1292,
+        "percent": 3.06
+      },
+      {
+        "id": "mysql.impl.percona",
+        "count": 224,
+        "percent": 0.53
+      },
+      {
+        "id": "mysql.impl.tidb",
+        "count": 1,
+        "percent": 0.0
+      }
+    ],
+    "category_coverage": [
+      {
+        "category": "auth_metadata",
+        "count": 41498,
+        "percent": 98.29
+      },
+      {
+        "category": "capability_metadata",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "category": "distribution_hint",
+        "count": 13241,
+        "percent": 31.36
+      },
+      {
+        "category": "implementation",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "category": "protocol_identity",
+        "count": 42220,
+        "percent": 100.0
+      },
+      {
+        "category": "provider_hint",
+        "count": 1292,
+        "percent": 3.06
+      },
+      {
+        "category": "runtime_hint",
+        "count": 4708,
+        "percent": 11.15
+      },
+      {
+        "category": "version_extraction",
+        "count": 42220,
+        "percent": 100.0
+      }
+    ],
+    "top_extracted_values": {
+      "version": [
+        {
+          "value": "5.7.44-48",
+          "count": 9258
+        },
+        {
+          "value": "5.7.23-23",
+          "count": 6166
+        },
+        {
+          "value": "5.5.5-10.11.17-MariaDB-cll-lve",
+          "count": 2998
+        },
+        {
+          "value": "8.0.46-0ubuntu0.22.04.3",
+          "count": 2280
+        },
+        {
+          "value": "5.7.44-log",
+          "count": 2170
+        },
+        {
+          "value": "5.5.5-10.6.27-MariaDB",
+          "count": 2164
+        },
+        {
+          "value": "8.0.46-0ubuntu0.24.04.3",
+          "count": 2122
+        },
+        {
+          "value": "8.0.44",
+          "count": 1540
+        },
+        {
+          "value": "5.5.5-10.11.16-MariaDB-cll-lve",
+          "count": 1526
+        },
+        {
+          "value": "8.0.44-azure",
+          "count": 1490
+        },
+        {
+          "value": "5.7.44",
+          "count": 1478
+        },
+        {
+          "value": "8.0.42-0ubuntu0.20.04.1",
+          "count": 1446
+        },
+        {
+          "value": "8.0.46-0ubuntu0.22.04.2",
+          "count": 1440
+        },
+        {
+          "value": "8.0.46-0ubuntu0.24.04.2",
+          "count": 1390
+        },
+        {
+          "value": "8.0.46",
+          "count": 1388
+        },
+        {
+          "value": "9.6.0",
+          "count": 1352
+        },
+        {
+          "value": "8.0.36",
+          "count": 1208
+        },
+        {
+          "value": "8.0.36-2ubuntu3",
+          "count": 894
+        },
+        {
+          "value": "5.7.44-azure-log",
+          "count": 892
+        },
+        {
+          "value": "5.5.68-MariaDB",
+          "count": 878
+        },
+        {
+          "value": "8.0.24",
+          "count": 824
+        },
+        {
+          "value": "5.5.5-10.11.14-MariaDB-0+deb12u2",
+          "count": 822
+        },
+        {
+          "value": "5.5.5-10.6.27-MariaDB-cll-lve",
+          "count": 770
+        },
+        {
+          "value": "9.5.0",
+          "count": 734
+        },
+        {
+          "value": "8.0.45",
+          "count": 658
+        },
+        {
+          "value": "8.0.31-google",
+          "count": 582
+        },
+        {
+          "value": "5.7.33-0ubuntu0.16.04.1",
+          "count": 504
+        },
+        {
+          "value": "5.7.42-0ubuntu0.18.04.1",
+          "count": 498
+        },
+        {
+          "value": "5.7.40-log",
+          "count": 480
+        },
+        {
+          "value": "8.0.42",
+          "count": 470
+        }
+      ],
+      "major_version": [
+        {
+          "value": "5",
+          "count": 25167
+        },
+        {
+          "value": "8",
+          "count": 14631
+        },
+        {
+          "value": "9",
+          "count": 1266
+        },
+        {
+          "value": "11",
+          "count": 976
+        },
+        {
+          "value": "12",
+          "count": 134
+        },
+        {
+          "value": "4",
+          "count": 23
+        },
+        {
+          "value": "3",
+          "count": 18
+        },
+        {
+          "value": "23",
+          "count": 3
+        },
+        {
+          "value": "25",
+          "count": 1
+        },
+        {
+          "value": "10",
+          "count": 1
+        }
+      ],
+      "auth_plugin": [
+        {
+          "value": "_password",
+          "count": 41495
+        },
+        {
+          "value": "ve_password",
+          "count": 2
+        },
+        {
+          "value": "e_password",
+          "count": 1
+        }
+      ],
+      "capability_flags": [
+        {
+          "value": "65280",
+          "count": 31528
+        },
+        {
+          "value": "65024",
+          "count": 10285
+        },
+        {
+          "value": "11264",
+          "count": 227
+        },
+        {
+          "value": "57088",
+          "count": 138
+        },
+        {
+          "value": "3840",
+          "count": 9
+        },
+        {
+          "value": "12032",
+          "count": 9
+        },
+        {
+          "value": "3072",
+          "count": 5
+        },
+        {
+          "value": "2048",
+          "count": 4
+        },
+        {
+          "value": "3328",
+          "count": 3
+        },
+        {
+          "value": "56832",
+          "count": 2
+        },
+        {
+          "value": "36608",
+          "count": 2
+        },
+        {
+          "value": "2304",
+          "count": 2
+        },
+        {
+          "value": "61184",
+          "count": 1
+        },
+        {
+          "value": "0",
+          "count": 1
+        },
+        {
+          "value": "35072",
+          "count": 1
+        },
+        {
+          "value": "512",
+          "count": 1
+        },
+        {
+          "value": "24320",
+          "count": 1
+        },
+        {
+          "value": "28416",
+          "count": 1
+        }
+      ]
+    },
+    "unmatched_examples": []
+  }
+}

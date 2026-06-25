@@ -1,0 +1,380 @@
+{
+  "schema": "database-fingerprint-library-v1",
+  "library_id": "mysql-fingerprints",
+  "version": "0.1.0",
+  "generated_at": "2026-06-25T03:23:52.673549+00:00",
+  "source_corpus": {
+    "path": "external scan corpus (not committed)",
+    "record_count": 422199,
+    "note": "Raw scan corpus is not committed."
+  },
+  "protocol": {
+    "canonical": "MYSQL",
+    "layer": "application",
+    "transport": [
+      "tcp"
+    ]
+  },
+  "rules": [
+    {
+      "id": "mysql.protocol.handshake-v10",
+      "category": "protocol_identity",
+      "name": "MySQL protocol v10 handshake",
+      "description": "Matches scanner records parsed from a MySQL-compatible initial handshake packet.",
+      "match": {
+        "field_equals": {
+          "protocol": "MYSQL",
+          "mysql.protocol_version": 10
+        },
+        "field_present": [
+          "mysql.version"
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "MYSQL",
+        "service_family": "mysql-compatible"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "protocol",
+        "mysql.protocol_version",
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 422199
+    },
+    {
+      "id": "mysql.extract.version",
+      "category": "version_extraction",
+      "name": "MySQL version extractor",
+      "description": "Extracts the server version string from the handshake.",
+      "match": {
+        "field_equals": {
+          "protocol": "MYSQL",
+          "mysql.protocol_version": 10
+        },
+        "field_present": [
+          "mysql.version"
+        ]
+      },
+      "extract": [
+        {
+          "field": "version",
+          "source": "mysql.version",
+          "regex": "(?P<version>(?:MySQL\\s*)?[0-9][0-9A-Za-z.+_\\-~]*)",
+          "group": "version"
+        }
+      ],
+      "labels": {
+        "version_field": "mysql.version"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 422199
+    },
+    {
+      "id": "mysql.extract.major",
+      "category": "version_extraction",
+      "name": "MySQL major version extractor",
+      "description": "Extracts the leading major version number.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "^(?:MySQL\\s*)?[0-9]+"
+        }
+      },
+      "extract": [
+        {
+          "field": "major_version",
+          "source": "mysql.version",
+          "regex": "^(?:MySQL\\s*)?(?P<major>[0-9]+)",
+          "group": "major"
+        }
+      ],
+      "labels": {
+        "version_component": "major"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 422198
+    },
+    {
+      "id": "mysql.impl.mariadb",
+      "category": "implementation",
+      "name": "MariaDB",
+      "description": "Identifies MariaDB by version marker.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "MariaDB"
+        }
+      },
+      "extract": [
+        {
+          "field": "version",
+          "source": "mysql.version"
+        }
+      ],
+      "labels": {
+        "implementation": "MariaDB"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 105407
+    },
+    {
+      "id": "mysql.impl.percona",
+      "category": "implementation",
+      "name": "Percona Server",
+      "description": "Identifies Percona Server by version marker.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "Percona"
+        }
+      },
+      "extract": [
+        {
+          "field": "version",
+          "source": "mysql.version"
+        }
+      ],
+      "labels": {
+        "implementation": "Percona Server"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 2078
+    },
+    {
+      "id": "mysql.impl.tidb",
+      "category": "implementation",
+      "name": "TiDB",
+      "description": "Identifies TiDB MySQL-compatible endpoints by version marker.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "TiDB"
+        }
+      },
+      "extract": [
+        {
+          "field": "version",
+          "source": "mysql.version"
+        }
+      ],
+      "labels": {
+        "implementation": "TiDB"
+      },
+      "confidence": 0.99,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 24
+    },
+    {
+      "id": "mysql.impl.mysql-compatible-default",
+      "category": "implementation",
+      "name": "MySQL or unmarked compatible server",
+      "description": "Classifies numeric MySQL protocol v10 handshakes without known alternate implementation markers.",
+      "match": {
+        "field_equals": {
+          "protocol": "MYSQL",
+          "mysql.protocol_version": 10
+        },
+        "field_regex": {
+          "mysql.version": "^(?:MySQL\\s*)?[0-9]"
+        },
+        "none_field_regex": [
+          {
+            "field": "mysql.version",
+            "regex": "MariaDB|Percona|TiDB|OceanBase"
+          }
+        ]
+      },
+      "extract": [
+        {
+          "field": "version",
+          "source": "mysql.version"
+        }
+      ],
+      "labels": {
+        "implementation": "MySQL_or_compatible"
+      },
+      "confidence": 0.88,
+      "evidence": [
+        "mysql.protocol_version",
+        "mysql.version"
+      ],
+      "notes": "Some compatible products expose only a numeric MySQL-looking version.",
+      "sample_count": 314689
+    },
+    {
+      "id": "mysql.dist.ubuntu",
+      "category": "distribution_hint",
+      "name": "Ubuntu packaged MySQL/MariaDB",
+      "description": "Detects Ubuntu package suffix in the version string.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "ubuntu"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "distribution_hint": "ubuntu-package"
+      },
+      "confidence": 0.85,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 82508
+    },
+    {
+      "id": "mysql.dist.debian",
+      "category": "distribution_hint",
+      "name": "Debian packaged MySQL/MariaDB",
+      "description": "Detects Debian package suffix in the version string.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "deb[0-9]|debian"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "distribution_hint": "debian-package"
+      },
+      "confidence": 0.85,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 13047
+    },
+    {
+      "id": "mysql.dist.azure",
+      "category": "provider_hint",
+      "name": "Azure Database for MySQL marker",
+      "description": "Detects Azure suffix in the version string.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "azure"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "provider_hint": "azure"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 12334
+    },
+    {
+      "id": "mysql.dist.cloudlinux",
+      "category": "distribution_hint",
+      "name": "CloudLinux/cPanel LVE marker",
+      "description": "Detects cll-lve suffix common in hosted MariaDB deployments.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "cll-lve"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "distribution_hint": "cloudlinux-lve"
+      },
+      "confidence": 0.88,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 35847
+    },
+    {
+      "id": "mysql.runtime.log-enabled",
+      "category": "runtime_hint",
+      "name": "Binary logging marker",
+      "description": "Detects -log suffix in the server version.",
+      "match": {
+        "field_regex": {
+          "mysql.version": "-log\\b"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "runtime_hint": "log-enabled"
+      },
+      "confidence": 0.75,
+      "evidence": [
+        "mysql.version"
+      ],
+      "notes": "",
+      "sample_count": 47431
+    },
+    {
+      "id": "mysql.auth.plugin-observed",
+      "category": "auth_metadata",
+      "name": "Authentication plugin field observed",
+      "description": "Captures the scanner-parsed authentication plugin field.",
+      "match": {
+        "field_present": [
+          "mysql.auth_plugin"
+        ]
+      },
+      "extract": [
+        {
+          "field": "auth_plugin",
+          "source": "mysql.auth_plugin"
+        }
+      ],
+      "labels": {
+        "metadata": "auth_plugin"
+      },
+      "confidence": 0.55,
+      "evidence": [
+        "mysql.auth_plugin"
+      ],
+      "notes": "The current scanner parser appears to truncate common plugin names in many records; use as metadata, not a product fingerprint.",
+      "sample_count": 415196
+    },
+    {
+      "id": "mysql.capability.flags-observed",
+      "category": "capability_metadata",
+      "name": "Capability flags observed",
+      "description": "Captures raw MySQL capability flags from the handshake.",
+      "match": {
+        "field_present": [
+          "mysql.capability_flags"
+        ]
+      },
+      "extract": [
+        {
+          "field": "capability_flags",
+          "source": "mysql.capability_flags"
+        }
+      ],
+      "labels": {
+        "metadata": "capability_flags"
+      },
+      "confidence": 0.65,
+      "evidence": [
+        "mysql.capability_flags"
+      ],
+      "notes": "",
+      "sample_count": 422199
+    }
+  ]
+}

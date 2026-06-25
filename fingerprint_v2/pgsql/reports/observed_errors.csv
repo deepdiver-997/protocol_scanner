@@ -1,0 +1,31 @@
+sqlstate,message,count
+08P01,bad packet header: '1600000000000300',933
+57P03,The connection failed. Try connecting again using the cluster configuration port. You can find this port using AWS Redshift console or CLI.,351
+,,275
+28000,SSL/TLS required,183
+XX000,(ENOIDENTIFIER) no tenant identifier provided (external_id or sni_hostname required),130
+XX000,invalid length of startup packet,50
+57P03,You can't connect to your cluster while it is paused. Please try again later.,49
+08004,"Only TLS connections are supported. (Ensure that the ""sslmode"" option is set to ""require"".)",20
+08004,Unexpected error,11
+,invalid pgsql protocol version: 0.768,11
+58000,System error,7
+,unable to authenticate,4
+XX000,failed to receive startup message: invalid length of startup packet: 369098748,3
+XX000,proxy internal error: ValueError: bad startup length 369098752,3
+XX000,Unknown bootstrap message: 768,3
+08P01,unsupported frontend protocol 768,2
+28000,SSL is required,2
+28000,"no pg_hba.conf entry for host ""203.0.113.42"", user ""postgres"", database ""template0"", SSL off",2
+,[pg-proxy] Client must use SSL session encryption,2
+28000,no pg_hba.conf entry for host,2
+08000,Failed to read startup message,1
+0A000,unsupported frontend protocol 0.0: server supports 2.0 to 3.0,1
+,invalid initial message,1
+08P01,Rumpty could not read the Postgres startup packet,1
+54000,startup message too large: 369098752 bytes exceeds limit of 10485760 bytes,1
+28P01,"password authentication failed for user ""postgres""",1
+08000,Unsupported PostgreSQL protocol version,1
+XX000,invalid packet format,1
+08P01,SSL connection required. Please connect with sslmode=require.,1
+,invalid startup packet,1
