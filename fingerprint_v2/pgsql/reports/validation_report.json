@@ -1,0 +1,516 @@
+{
+  "full_corpus": {
+    "record_count": 2053,
+    "metrics": {
+      "protocol_match": {
+        "count": 2053,
+        "percent": 100.0
+      },
+      "implementation_match": {
+        "count": 531,
+        "percent": 25.86
+      },
+      "version_extraction": {
+        "count": 0,
+        "percent": 0.0
+      },
+      "sqlstate_extraction": {
+        "count": 1759,
+        "percent": 85.68
+      }
+    },
+    "rule_counts": [
+      {
+        "id": "pgsql.protocol.v3-context",
+        "count": 2053,
+        "percent": 100.0
+      },
+      {
+        "id": "pgsql.extract.message",
+        "count": 1778,
+        "percent": 86.6
+      },
+      {
+        "id": "pgsql.protocol.error-response",
+        "count": 1771,
+        "percent": 86.26
+      },
+      {
+        "id": "pgsql.extract.sqlstate",
+        "count": 1759,
+        "percent": 85.68
+      },
+      {
+        "id": "pgsql.err.bad-packet-header",
+        "count": 933,
+        "percent": 45.45
+      },
+      {
+        "id": "pgsql.availability.starting-or-paused",
+        "count": 400,
+        "percent": 19.48
+      },
+      {
+        "id": "pgsql.impl.redshift",
+        "count": 351,
+        "percent": 17.1
+      },
+      {
+        "id": "pgsql.security.ssl-required",
+        "count": 204,
+        "percent": 9.94
+      },
+      {
+        "id": "pgsql.auth.invalid-auth",
+        "count": 194,
+        "percent": 9.45
+      },
+      {
+        "id": "pgsql.impl.tenant-proxy",
+        "count": 130,
+        "percent": 6.33
+      },
+      {
+        "id": "pgsql.err.invalid-startup",
+        "count": 92,
+        "percent": 4.48
+      },
+      {
+        "id": "pgsql.impl.cratedb",
+        "count": 50,
+        "percent": 2.44
+      },
+      {
+        "id": "pgsql.protocol.authentication",
+        "count": 14,
+        "percent": 0.68
+      },
+      {
+        "id": "pgsql.resource.memory",
+        "count": 13,
+        "percent": 0.63
+      }
+    ],
+    "category_coverage": [
+      {
+        "category": "auth_state",
+        "count": 194,
+        "percent": 9.45
+      },
+      {
+        "category": "availability_state",
+        "count": 413,
+        "percent": 20.12
+      },
+      {
+        "category": "error_classification",
+        "count": 1025,
+        "percent": 49.93
+      },
+      {
+        "category": "field_extraction",
+        "count": 1778,
+        "percent": 86.6
+      },
+      {
+        "category": "implementation_hint",
+        "count": 531,
+        "percent": 25.86
+      },
+      {
+        "category": "protocol_identity",
+        "count": 2053,
+        "percent": 100.0
+      },
+      {
+        "category": "security_requirement",
+        "count": 204,
+        "percent": 9.94
+      }
+    ],
+    "top_extracted_values": {
+      "sqlstate": [
+        {
+          "value": "08P01",
+          "count": 937
+        },
+        {
+          "value": "57P03",
+          "count": 400
+        },
+        {
+          "value": "XX000",
+          "count": 190
+        },
+        {
+          "value": "28000",
+          "count": 189
+        },
+        {
+          "value": "08004",
+          "count": 31
+        },
+        {
+          "value": "58000",
+          "count": 7
+        },
+        {
+          "value": "08000",
+          "count": 2
+        },
+        {
+          "value": "0A000",
+          "count": 1
+        },
+        {
+          "value": "54000",
+          "count": 1
+        },
+        {
+          "value": "28P01",
+          "count": 1
+        }
+      ],
+      "message": [
+        {
+          "value": "bad packet header: '1600000000000300'",
+          "count": 933
+        },
+        {
+          "value": "The connection failed. Try connecting again using the cluster configuration port. You can find this port using AWS Redshift console or CLI.",
+          "count": 351
+        },
+        {
+          "value": "SSL/TLS required",
+          "count": 183
+        },
+        {
+          "value": "(ENOIDENTIFIER) no tenant identifier provided (external_id or sni_hostname required)",
+          "count": 130
+        },
+        {
+          "value": "invalid length of startup packet",
+          "count": 50
+        },
+        {
+          "value": "You can't connect to your cluster while it is paused. Please try again later.",
+          "count": 49
+        },
+        {
+          "value": "Only TLS connections are supported. (Ensure that the \"sslmode\" option is set to \"require\".)",
+          "count": 20
+        },
+        {
+          "value": "Unexpected error",
+          "count": 11
+        },
+        {
+          "value": "invalid pgsql protocol version: 0.768",
+          "count": 11
+        },
+        {
+          "value": "System error",
+          "count": 7
+        },
+        {
+          "value": "unable to authenticate",
+          "count": 4
+        },
+        {
+          "value": "failed to receive startup message: invalid length of startup packet: 369098748",
+          "count": 3
+        },
+        {
+          "value": "proxy internal error: ValueError: bad startup length 369098752",
+          "count": 3
+        },
+        {
+          "value": "Unknown bootstrap message: 768",
+          "count": 3
+        },
+        {
+          "value": "unsupported frontend protocol 768",
+          "count": 2
+        },
+        {
+          "value": "SSL is required",
+          "count": 2
+        },
+        {
+          "value": "no pg_hba.conf entry for host \"203.0.113.42\", user \"postgres\", database \"template0\", SSL off",
+          "count": 2
+        },
+        {
+          "value": "[pg-proxy] Client must use SSL session encryption",
+          "count": 2
+        },
+        {
+          "value": "no pg_hba.conf entry for host",
+          "count": 2
+        },
+        {
+          "value": "Failed to read startup message",
+          "count": 1
+        },
+        {
+          "value": "unsupported frontend protocol 0.0: server supports 2.0 to 3.0",
+          "count": 1
+        },
+        {
+          "value": "invalid initial message",
+          "count": 1
+        },
+        {
+          "value": "Rumpty could not read the Postgres startup packet",
+          "count": 1
+        },
+        {
+          "value": "startup message too large: 369098752 bytes exceeds limit of 10485760 bytes",
+          "count": 1
+        },
+        {
+          "value": "password authentication failed for user \"postgres\"",
+          "count": 1
+        },
+        {
+          "value": "Unsupported PostgreSQL protocol version",
+          "count": 1
+        },
+        {
+          "value": "invalid packet format",
+          "count": 1
+        },
+        {
+          "value": "SSL connection required. Please connect with sslmode=require.",
+          "count": 1
+        },
+        {
+          "value": "invalid startup packet",
+          "count": 1
+        }
+      ]
+    },
+    "unmatched_examples": []
+  },
+  "holdout_10pct": {
+    "record_count": 205,
+    "metrics": {
+      "protocol_match": {
+        "count": 205,
+        "percent": 100.0
+      },
+      "implementation_match": {
+        "count": 62,
+        "percent": 30.24
+      },
+      "version_extraction": {
+        "count": 0,
+        "percent": 0.0
+      },
+      "sqlstate_extraction": {
+        "count": 182,
+        "percent": 88.78
+      }
+    },
+    "rule_counts": [
+      {
+        "id": "pgsql.protocol.v3-context",
+        "count": 205,
+        "percent": 100.0
+      },
+      {
+        "id": "pgsql.extract.message",
+        "count": 184,
+        "percent": 89.76
+      },
+      {
+        "id": "pgsql.protocol.error-response",
+        "count": 183,
+        "percent": 89.27
+      },
+      {
+        "id": "pgsql.extract.sqlstate",
+        "count": 182,
+        "percent": 88.78
+      },
+      {
+        "id": "pgsql.err.bad-packet-header",
+        "count": 91,
+        "percent": 44.39
+      },
+      {
+        "id": "pgsql.availability.starting-or-paused",
+        "count": 45,
+        "percent": 21.95
+      },
+      {
+        "id": "pgsql.impl.redshift",
+        "count": 39,
+        "percent": 19.02
+      },
+      {
+        "id": "pgsql.auth.invalid-auth",
+        "count": 20,
+        "percent": 9.76
+      },
+      {
+        "id": "pgsql.impl.tenant-proxy",
+        "count": 20,
+        "percent": 9.76
+      },
+      {
+        "id": "pgsql.security.ssl-required",
+        "count": 17,
+        "percent": 8.29
+      },
+      {
+        "id": "pgsql.err.invalid-startup",
+        "count": 7,
+        "percent": 3.41
+      },
+      {
+        "id": "pgsql.impl.cratedb",
+        "count": 3,
+        "percent": 1.46
+      },
+      {
+        "id": "pgsql.protocol.authentication",
+        "count": 1,
+        "percent": 0.49
+      },
+      {
+        "id": "pgsql.resource.memory",
+        "count": 1,
+        "percent": 0.49
+      }
+    ],
+    "category_coverage": [
+      {
+        "category": "auth_state",
+        "count": 20,
+        "percent": 9.76
+      },
+      {
+        "category": "availability_state",
+        "count": 46,
+        "percent": 22.44
+      },
+      {
+        "category": "error_classification",
+        "count": 98,
+        "percent": 47.8
+      },
+      {
+        "category": "field_extraction",
+        "count": 184,
+        "percent": 89.76
+      },
+      {
+        "category": "implementation_hint",
+        "count": 62,
+        "percent": 30.24
+      },
+      {
+        "category": "protocol_identity",
+        "count": 205,
+        "percent": 100.0
+      },
+      {
+        "category": "security_requirement",
+        "count": 17,
+        "percent": 8.29
+      }
+    ],
+    "top_extracted_values": {
+      "sqlstate": [
+        {
+          "value": "08P01",
+          "count": 91
+        },
+        {
+          "value": "57P03",
+          "count": 45
+        },
+        {
+          "value": "XX000",
+          "count": 23
+        },
+        {
+          "value": "28000",
+          "count": 18
+        },
+        {
+          "value": "08004",
+          "count": 3
+        },
+        {
+          "value": "58000",
+          "count": 1
+        },
+        {
+          "value": "28P01",
+          "count": 1
+        }
+      ],
+      "message": [
+        {
+          "value": "bad packet header: '1600000000000300'",
+          "count": 91
+        },
+        {
+          "value": "The connection failed. Try connecting again using the cluster configuration port. You can find this port using AWS Redshift console or CLI.",
+          "count": 39
+        },
+        {
+          "value": "(ENOIDENTIFIER) no tenant identifier provided (external_id or sni_hostname required)",
+          "count": 20
+        },
+        {
+          "value": "SSL/TLS required",
+          "count": 16
+        },
+        {
+          "value": "You can't connect to your cluster while it is paused. Please try again later.",
+          "count": 6
+        },
+        {
+          "value": "invalid length of startup packet",
+          "count": 3
+        },
+        {
+          "value": "Unexpected error",
+          "count": 2
+        },
+        {
+          "value": "unable to authenticate",
+          "count": 1
+        },
+        {
+          "value": "SSL is required",
+          "count": 1
+        },
+        {
+          "value": "invalid pgsql protocol version: 0.768",
+          "count": 1
+        },
+        {
+          "value": "Only TLS connections are supported. (Ensure that the \"sslmode\" option is set to \"require\".)",
+          "count": 1
+        },
+        {
+          "value": "System error",
+          "count": 1
+        },
+        {
+          "value": "password authentication failed for user \"postgres\"",
+          "count": 1
+        },
+        {
+          "value": "no pg_hba.conf entry for host",
+          "count": 1
+        }
+      ]
+    },
+    "unmatched_examples": []
+  }
+}

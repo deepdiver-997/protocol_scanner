@@ -1,0 +1,555 @@
+{
+  "schema": "database-fingerprint-library-v1",
+  "library_id": "pgsql-fingerprints",
+  "version": "0.1.0",
+  "generated_at": "2026-06-25T03:23:52.893729+00:00",
+  "source_corpus": {
+    "path": "external scan corpus (not committed)",
+    "record_count": 2053,
+    "note": "Raw scan corpus is not committed."
+  },
+  "protocol": {
+    "canonical": "PGSQL",
+    "layer": "application",
+    "transport": [
+      "tcp"
+    ]
+  },
+  "rules": [
+    {
+      "id": "pgsql.protocol.v3-context",
+      "category": "protocol_identity",
+      "name": "PostgreSQL protocol v3 scanner context",
+      "description": "Matches scanner records parsed as PostgreSQL protocol version 3.0.",
+      "match": {
+        "field_equals": {
+          "protocol": "PGSQL",
+          "pgsql.protocol_version": 196608
+        }
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "PGSQL",
+        "protocol_version": "3.0"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "protocol",
+        "pgsql.protocol_version"
+      ],
+      "notes": "",
+      "sample_count": 2053
+    },
+    {
+      "id": "pgsql.protocol.error-response",
+      "category": "protocol_identity",
+      "name": "PostgreSQL ErrorResponse",
+      "description": "Matches PostgreSQL wire ErrorResponse/FatalResponse style fields.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^S(ERROR|FATAL)\\x00"
+          },
+          {
+            "field": "banner",
+            "regex": "^C[0-9A-Z]{5}\\x00M"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "PGSQL",
+        "response_type": "ErrorResponse"
+      },
+      "confidence": 0.98,
+      "evidence": [
+        "banner ErrorResponse fields"
+      ],
+      "notes": "",
+      "sample_count": 1771
+    },
+    {
+      "id": "pgsql.protocol.authentication",
+      "category": "protocol_identity",
+      "name": "PostgreSQL Authentication response",
+      "description": "Matches textualized PostgreSQL AuthenticationOk/Authentication request responses.",
+      "match": {
+        "field_regex": {
+          "banner": "^Authentication(Ok|[0-9]+)"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "PGSQL",
+        "response_type": "Authentication"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "banner"
+      ],
+      "notes": "",
+      "sample_count": 14
+    },
+    {
+      "id": "pgsql.protocol.ssl-request-response",
+      "category": "protocol_identity",
+      "name": "PostgreSQL SSLRequest response",
+      "description": "Matches one-byte SSLRequest responses captured by the online reprobe tool.",
+      "match": {
+        "field_regex": {
+          "banner": "^SSLRequest:[SN]"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "protocol": "PGSQL",
+        "response_type": "SSLRequest"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "SSLRequest response"
+      ],
+      "notes": "This rule is expected for online reprobe output and may have zero count in offline corpora.",
+      "sample_count": 0
+    },
+    {
+      "id": "pgsql.auth.method.ok",
+      "category": "auth_fingerprint",
+      "name": "AuthenticationOk",
+      "description": "Identifies PostgreSQL AuthenticationOk responses.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^AuthenticationOk$"
+          },
+          {
+            "field": "pgsql_auth.method",
+            "regex": "^ok$"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_method": "ok"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "AuthenticationOk"
+      ],
+      "notes": "Useful as an online low-level fingerprint when a server accepts the minimal StartupMessage.",
+      "sample_count": 6
+    },
+    {
+      "id": "pgsql.auth.method.cleartext-password",
+      "category": "auth_fingerprint",
+      "name": "Cleartext password authentication",
+      "description": "Identifies AuthenticationCleartextPassword responses.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^Authentication3$"
+          },
+          {
+            "field": "pgsql_auth.method",
+            "regex": "^cleartext_password$"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_method": "cleartext_password"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "AuthenticationCleartextPassword"
+      ],
+      "notes": "",
+      "sample_count": 4
+    },
+    {
+      "id": "pgsql.auth.method.md5-password",
+      "category": "auth_fingerprint",
+      "name": "MD5 password authentication",
+      "description": "Identifies AuthenticationMD5Password responses.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^Authentication5$"
+          },
+          {
+            "field": "pgsql_auth.method",
+            "regex": "^md5_password$"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_method": "md5_password"
+      },
+      "confidence": 0.92,
+      "evidence": [
+        "AuthenticationMD5Password"
+      ],
+      "notes": "",
+      "sample_count": 1
+    },
+    {
+      "id": "pgsql.auth.method.sasl",
+      "category": "auth_fingerprint",
+      "name": "SASL authentication",
+      "description": "Identifies AuthenticationSASL-family responses.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^Authentication1[0-2]$"
+          },
+          {
+            "field": "pgsql_auth.method",
+            "regex": "^sasl"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_method": "sasl"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "AuthenticationSASL"
+      ],
+      "notes": "Expected in online reprobe output for PostgreSQL 10+ SCRAM deployments.",
+      "sample_count": 0
+    },
+    {
+      "id": "pgsql.auth.method.nonstandard-code",
+      "category": "auth_fingerprint",
+      "name": "Non-standard or misparsed authentication code",
+      "description": "Flags Authentication responses with codes outside known PostgreSQL AuthenticationRequest values.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "^Authentication[1-9][0-9]{2,}$"
+          },
+          {
+            "field": "pgsql_auth.method",
+            "regex": "^unknown_[0-9]+$"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_method": "nonstandard_or_misparsed"
+      },
+      "confidence": 0.55,
+      "evidence": [
+        "Authentication code"
+      ],
+      "notes": "Treat as parser/anomaly evidence, not a PostgreSQL implementation label.",
+      "sample_count": 3
+    },
+    {
+      "id": "pgsql.extract.sqlstate",
+      "category": "field_extraction",
+      "name": "SQLSTATE extractor",
+      "description": "Extracts SQLSTATE from PostgreSQL ErrorResponse records.",
+      "match": {
+        "field_regex": {
+          "pgsql_fields.sqlstate": "^[0-9A-Z]{5}$"
+        }
+      },
+      "extract": [
+        {
+          "field": "sqlstate",
+          "source": "pgsql_fields.sqlstate"
+        }
+      ],
+      "labels": {
+        "field": "sqlstate"
+      },
+      "confidence": 0.98,
+      "evidence": [
+        "pgsql_fields.sqlstate"
+      ],
+      "notes": "",
+      "sample_count": 1759
+    },
+    {
+      "id": "pgsql.extract.message",
+      "category": "field_extraction",
+      "name": "Error message extractor",
+      "description": "Extracts PostgreSQL error message field.",
+      "match": {
+        "field_present": [
+          "pgsql_fields.message"
+        ]
+      },
+      "extract": [
+        {
+          "field": "message",
+          "source": "pgsql_fields.message"
+        }
+      ],
+      "labels": {
+        "field": "message"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "pgsql_fields.message"
+      ],
+      "notes": "",
+      "sample_count": 1778
+    },
+    {
+      "id": "pgsql.extract.server-version",
+      "category": "field_extraction",
+      "name": "ParameterStatus server_version extractor",
+      "description": "Extracts server_version from PostgreSQL ParameterStatus messages when available.",
+      "match": {
+        "field_present": [
+          "pgsql_parameters.server_version"
+        ]
+      },
+      "extract": [
+        {
+          "field": "server_version",
+          "source": "pgsql_parameters.server_version"
+        }
+      ],
+      "labels": {
+        "field": "server_version"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "ParameterStatus server_version"
+      ],
+      "notes": "Only available after AuthenticationOk or on permissive/proxy paths; absent in most unauthenticated scans.",
+      "sample_count": 0
+    },
+    {
+      "id": "pgsql.impl.redshift",
+      "category": "implementation_hint",
+      "name": "Amazon Redshift",
+      "description": "Identifies Redshift by cluster configuration port guidance or Redshift marker.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "Redshift"
+          },
+          {
+            "field": "pgsql_fields.message",
+            "regex": "cluster configuration port"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "implementation_hint": "Amazon Redshift"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "message"
+      ],
+      "notes": "",
+      "sample_count": 351
+    },
+    {
+      "id": "pgsql.impl.cratedb",
+      "category": "implementation_hint",
+      "name": "CrateDB PostgreSQL wire protocol",
+      "description": "Identifies CrateDB by PgDecoder/java stack markers.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "banner",
+            "regex": "crate\\.protocols\\.postgres"
+          },
+          {
+            "field": "banner",
+            "regex": "PgDecoder\\.java"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "implementation_hint": "CrateDB"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "banner stack marker"
+      ],
+      "notes": "",
+      "sample_count": 50
+    },
+    {
+      "id": "pgsql.impl.tenant-proxy",
+      "category": "implementation_hint",
+      "name": "Tenant-aware PostgreSQL proxy",
+      "description": "Detects tenant/SNI proxy error used by some serverless PostgreSQL providers.",
+      "match": {
+        "field_regex": {
+          "pgsql_fields.message": "tenant identifier|external_id|sni_hostname"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "implementation_hint": "tenant-aware-proxy"
+      },
+      "confidence": 0.82,
+      "evidence": [
+        "message"
+      ],
+      "notes": "Provider name is intentionally not asserted from this message alone.",
+      "sample_count": 130
+    },
+    {
+      "id": "pgsql.err.bad-packet-header",
+      "category": "error_classification",
+      "name": "Bad packet header",
+      "description": "Classifies bad packet header protocol errors.",
+      "match": {
+        "field_regex": {
+          "pgsql_fields.message": "bad packet header"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "error_class": "protocol_violation_bad_packet_header"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "sqlstate",
+        "message"
+      ],
+      "notes": "",
+      "sample_count": 933
+    },
+    {
+      "id": "pgsql.err.invalid-startup",
+      "category": "error_classification",
+      "name": "Invalid startup packet",
+      "description": "Classifies invalid startup-packet errors.",
+      "match": {
+        "field_regex": {
+          "banner": "invalid (length of )?startup packet|invalid pgsql protocol version"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "error_class": "invalid_startup_packet"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "banner"
+      ],
+      "notes": "",
+      "sample_count": 92
+    },
+    {
+      "id": "pgsql.security.ssl-required",
+      "category": "security_requirement",
+      "name": "TLS required",
+      "description": "Detects endpoints requiring SSL/TLS before PostgreSQL startup.",
+      "match": {
+        "field_regex": {
+          "banner": "SSL/TLS required|Only TLS connections are supported|sslmode.*require"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "security_requirement": "tls_required"
+      },
+      "confidence": 0.95,
+      "evidence": [
+        "message"
+      ],
+      "notes": "",
+      "sample_count": 204
+    },
+    {
+      "id": "pgsql.auth.invalid-auth",
+      "category": "auth_state",
+      "name": "Authentication or authorization rejected",
+      "description": "Detects authentication/authorization failure states.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "pgsql_fields.sqlstate",
+            "regex": "^28"
+          },
+          {
+            "field": "banner",
+            "regex": "unable to authenticate|password authentication failed"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "auth_state": "rejected"
+      },
+      "confidence": 0.88,
+      "evidence": [
+        "sqlstate",
+        "message"
+      ],
+      "notes": "",
+      "sample_count": 194
+    },
+    {
+      "id": "pgsql.availability.starting-or-paused",
+      "category": "availability_state",
+      "name": "Service unavailable/starting/paused",
+      "description": "Detects service unavailable or paused cluster responses.",
+      "match": {
+        "any_field_regex": [
+          {
+            "field": "pgsql_fields.sqlstate",
+            "regex": "57P03"
+          },
+          {
+            "field": "banner",
+            "regex": "cluster while it is paused|Try connecting again"
+          }
+        ]
+      },
+      "extract": [],
+      "labels": {
+        "availability_state": "temporarily_unavailable"
+      },
+      "confidence": 0.9,
+      "evidence": [
+        "sqlstate",
+        "message"
+      ],
+      "notes": "",
+      "sample_count": 400
+    },
+    {
+      "id": "pgsql.resource.memory",
+      "category": "availability_state",
+      "name": "Resource allocation failure",
+      "description": "Detects resource allocation errors such as cannot allocate memory.",
+      "match": {
+        "field_regex": {
+          "banner": "cannot allocate memory|could not fork"
+        }
+      },
+      "extract": [],
+      "labels": {
+        "availability_state": "resource_exhausted"
+      },
+      "confidence": 0.85,
+      "evidence": [
+        "banner"
+      ],
+      "notes": "",
+      "sample_count": 13
+    }
+  ]
+}

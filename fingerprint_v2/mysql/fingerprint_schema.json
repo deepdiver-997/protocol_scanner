@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Database Fingerprint Library v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "library_id",
+    "version",
+    "protocol",
+    "rules"
+  ],
+  "properties": {
+    "schema": {
+      "const": "database-fingerprint-library-v1"
+    },
+    "library_id": {
+      "type": "string"
+    },
+    "version": {
+      "type": "string"
+    },
+    "protocol": {
+      "type": "object"
+    },
+    "rules": {
+      "type": "array"
+    }
+  }
+}
