@@ -39,3 +39,4 @@
 
 - This corpus primarily contains PostgreSQL wire ErrorResponse/Auth responses; server version is not exposed.
 - Implementation labels are hints when vendor-specific error text is present.
+- The SQLSTATE miss set is analyzed in `sqlstate_gap_analysis_20260625.md`; most missing records do not contain a SQLSTATE-bearing ErrorResponse.

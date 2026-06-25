@@ -25,6 +25,19 @@ from typing import Any
 
 
 PG_FIELD_TYPES = set("SEVCMDFHLPRWs")
+AUTH_METHODS = {
+    0: "ok",
+    2: "kerberos_v5",
+    3: "cleartext_password",
+    5: "md5_password",
+    6: "scm_credential",
+    7: "gss",
+    8: "gss_continue",
+    9: "sspi",
+    10: "sasl",
+    11: "sasl_continue",
+    12: "sasl_final",
+}
 
 
 def iter_json_objects(path: Path):
@@ -92,27 +105,70 @@ def parse_error_fields(payload: bytes) -> tuple[str, dict[str, str]]:
     return banner, fields
 
 
+def parse_parameter_status(payload: bytes) -> tuple[str, str]:
+    parts = payload.split(b"\x00")
+    if len(parts) < 2:
+        return "", ""
+    key = parts[0].decode("utf-8", errors="replace")
+    value = parts[1].decode("utf-8", errors="replace")
+    return key, value
+
+
+def parse_startup_messages(data: bytes) -> tuple[str, dict[str, str], dict[str, Any], dict[str, str], dict[str, Any]]:
+    fields: dict[str, str] = {}
+    parameters: dict[str, str] = {}
+    auth: dict[str, Any] = {"code": None, "method": ""}
+    messages: list[str] = []
+    banner = ""
+    pos = 0
+    while len(data) - pos >= 5:
+        msg_type = chr(data[pos])
+        length = struct.unpack("!I", data[pos + 1:pos + 5])[0]
+        if length < 4 or pos + 1 + length > len(data):
+            break
+        payload = data[pos + 5:pos + 1 + length]
+        messages.append(msg_type)
+        if msg_type == "E" and not fields:
+            banner, fields = parse_error_fields(payload)
+        elif msg_type == "R" and len(payload) >= 4 and auth["code"] is None:
+            code = struct.unpack("!I", payload[:4])[0]
+            auth = {"code": code, "method": AUTH_METHODS.get(code, f"unknown_{code}")}
+            if not banner:
+                banner = "AuthenticationOk" if code == 0 else f"Authentication{code}"
+        elif msg_type == "S":
+            key, value = parse_parameter_status(payload)
+            if key:
+                parameters[key] = value
+        pos += 1 + length
+    if not banner and messages:
+        banner = ",".join(messages)
+    meta = {
+        "types": messages,
+        "parsed_bytes": pos,
+        "raw_bytes": len(data),
+        "truncated": pos < len(data),
+    }
+    return banner, fields, auth, parameters, meta
+
+
 def record_from_response(port: int, ssl_response: str, data: bytes) -> dict[str, Any]:
     banner = f"SSLRequest:{ssl_response}" if ssl_response else ""
     fields = {}
-    if len(data) >= 5:
-        msg_type = chr(data[0])
-        length = struct.unpack("!I", data[1:5])[0]
-        payload = data[5:5 + max(0, length - 4)]
-        if msg_type == "E":
-            banner, fields = parse_error_fields(payload)
-        elif msg_type == "R" and len(payload) >= 4:
-            auth_code = struct.unpack("!I", payload[:4])[0]
-            banner = "AuthenticationOk" if auth_code == 0 else f"Authentication{auth_code}"
-        else:
-            banner = f"{msg_type}:{payload[:120].decode('utf-8', errors='replace')}"
+    auth: dict[str, Any] = {"code": None, "method": ""}
+    parameters: dict[str, str] = {}
+    messages: dict[str, Any] = {"types": [], "parsed_bytes": 0, "raw_bytes": len(data), "truncated": False}
+    if data:
+        parsed_banner, fields, auth, parameters, messages = parse_startup_messages(data)
+        if parsed_banner:
+            banner = parsed_banner
     return {
         "protocol": "PGSQL",
         "port": port,
         "accessible": True,
         "banner": banner,
         "vendor": "",
-        "pgsql": {"protocol_version": 196608, "version": ""},
+        "pgsql": {"protocol_version": 196608, "version": parameters.get("server_version", ""), "ssl_response": ssl_response},
+        "pgsql_auth": auth,
         "pgsql_fields": {
             "severity": fields.get("S", ""),
             "sqlstate": fields.get("C", ""),
@@ -121,6 +177,8 @@ def record_from_response(port: int, ssl_response: str, data: bytes) -> dict[str,
             "routine": fields.get("R", ""),
             "line": fields.get("L", ""),
         },
+        "pgsql_messages": messages,
+        "pgsql_parameters": parameters,
     }
 
 
@@ -185,7 +243,7 @@ def condition_matches(rule: dict[str, Any], record: dict[str, Any]) -> bool:
 
 def match_record(library: dict[str, Any], record: dict[str, Any] | None) -> dict[str, Any]:
     if not record:
-        return {"protocol_match": False, "sqlstate": "", "message": "", "matched_rule_ids": []}
+        return {"protocol_match": False, "sqlstate": "", "message": "", "auth_method": "", "server_version": "", "matched_rule_ids": []}
     ids = []
     for rule in library["rules"]:
         if condition_matches(rule, record):
@@ -194,6 +252,8 @@ def match_record(library: dict[str, Any], record: dict[str, Any] | None) -> dict
         "protocol_match": any(i.startswith("pgsql.protocol.") for i in ids),
         "sqlstate": get_path(record, "pgsql_fields.sqlstate"),
         "message": get_path(record, "pgsql_fields.message"),
+        "auth_method": get_path(record, "pgsql_auth.method"),
+        "server_version": get_path(record, "pgsql_parameters.server_version"),
         "matched_rule_ids": ids,
     }
 
@@ -214,6 +274,12 @@ def summarize(records: list[dict[str, Any]], total_ips: int, selected_targets: i
     rpct = lambda n: round(n * 100 / responded, 2) if responded else 0.0
     protocol = sum(1 for r in records if r["match"]["protocol_match"])
     sqlstate = sum(1 for r in records if r["match"]["sqlstate"])
+    auth_methods = Counter(r["match"]["auth_method"] or "none" for r in records)
+    server_versions = sum(1 for r in records if r["match"]["server_version"])
+    parameter_keys = Counter()
+    for r in records:
+        for key in ((r.get("record") or {}).get("pgsql_parameters") or {}):
+            parameter_keys[key] += 1
     return {
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "sample": {"fraction": fraction, "random_seed": seed, "total_unique_ips": total_ips, "selected_ip_port_targets": selected_targets},
@@ -221,25 +287,35 @@ def summarize(records: list[dict[str, Any]], total_ips: int, selected_targets: i
             "responded": {"count": responded, "percent": pct(responded)},
             "protocol_match": {"count": protocol, "percent": pct(protocol), "percent_of_responded": rpct(protocol)},
             "sqlstate_extraction": {"count": sqlstate, "percent": pct(sqlstate), "percent_of_responded": rpct(sqlstate)},
+            "server_version_extraction": {"count": server_versions, "percent": pct(server_versions), "percent_of_responded": rpct(server_versions)},
         },
         "probe_status": [{"status": k, "count": v, "percent": pct(v)} for k, v in Counter(r["probe_status"] for r in records).most_common()],
+        "auth_methods": [{"method": k, "count": v, "percent": pct(v)} for k, v in auth_methods.most_common()],
+        "parameter_keys": [{"key": k, "count": v, "percent": pct(v)} for k, v in parameter_keys.most_common()],
     }
 
 
 def write_outputs(prefix: Path, summary: dict[str, Any], records: list[dict[str, Any]]):
     prefix.with_suffix(".json").write_text(json.dumps({"summary": summary, "records": records}, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     with prefix.with_suffix(".csv").open("w", encoding="utf-8", newline="") as f:
-        cols = ["ip", "port", "probe_status", "protocol_match", "sqlstate", "message", "response_time_ms", "error"]
+        cols = ["ip", "port", "probe_status", "protocol_match", "sqlstate", "auth_method", "server_version", "message", "response_time_ms", "error"]
         writer = csv.DictWriter(f, fieldnames=cols)
         writer.writeheader()
         for r in records:
-            writer.writerow({"ip": r["ip"], "port": r["port"], "probe_status": r["probe_status"], "protocol_match": r["match"]["protocol_match"], "sqlstate": r["match"]["sqlstate"], "message": r["match"]["message"], "response_time_ms": r["response_time_ms"], "error": r["error"]})
+            writer.writerow({"ip": r["ip"], "port": r["port"], "probe_status": r["probe_status"], "protocol_match": r["match"]["protocol_match"], "sqlstate": r["match"]["sqlstate"], "auth_method": r["match"]["auth_method"], "server_version": r["match"]["server_version"], "message": r["match"]["message"], "response_time_ms": r["response_time_ms"], "error": r["error"]})
     lines = ["# Online PGSQL Reprobe", "", "## Metrics", "", "| metric | count | percent | percent_of_responded |", "|---|---:|---:|---:|"]
     for key, val in summary["metrics"].items():
         lines.append(f"| {key} | {val['count']} | {val['percent']}% | {val.get('percent_of_responded', '')}% |")
     lines.extend(["", "## Probe Status", "", "| status | count | percent |", "|---|---:|---:|"])
     for row in summary["probe_status"]:
         lines.append(f"| {row['status']} | {row['count']} | {row['percent']}% |")
+    lines.extend(["", "## Auth Methods", "", "| method | count | percent |", "|---|---:|---:|"])
+    for row in summary["auth_methods"]:
+        lines.append(f"| {row['method']} | {row['count']} | {row['percent']}% |")
+    if summary["parameter_keys"]:
+        lines.extend(["", "## ParameterStatus Keys", "", "| key | count | percent |", "|---|---:|---:|"])
+        for row in summary["parameter_keys"]:
+            lines.append(f"| {row['key']} | {row['count']} | {row['percent']}% |")
     prefix.with_suffix(".md").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
