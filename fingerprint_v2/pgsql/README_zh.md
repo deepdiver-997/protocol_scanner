@@ -51,9 +51,11 @@
 
 - 抽样方式：完整 10% 随机 IP 样本，205 个 IP:port
 - 主动行为：先发送 SSLRequest；非 TLS 响应时只发送最小 StartupMessage，不发送密码，不执行 SQL
-- 有响应目标：189 / 205
+- 有响应目标：187 / 205
 - 响应目标协议匹配：100.0%
-- 响应目标 SQLSTATE 提取：11.11%
+- 响应目标 SQLSTATE 提取：11.76%
+- 认证方法线索：cleartext_password 30，md5_password 6，sasl 4
+- `server_version`：0 条，未认证路径中未观察到 ParameterStatus
 
 注意：这批 PGSQL 结果主要是 PostgreSQL wire ErrorResponse / Authentication 响应，基本不暴露服务器版本，因此版本提取不是当前库的目标。
 SQLSTATE 未提取的 14.32% 里，多数为空响应或非 ErrorResponse 载荷；只有少量 ErrorResponse-like 样本缺少 SQLSTATE 字段。

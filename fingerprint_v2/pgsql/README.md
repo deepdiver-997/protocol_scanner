@@ -20,8 +20,9 @@ Raw scan corpora and raw IP lists are not committed.
 
 - full-corpus records: 2053
 - 10% real-IP holdout records: 205
-- online 10% reprobe: 205 sampled IP:port targets, 189 responded, 100%
-  protocol match among responders.
+- online 10% reprobe: 205 sampled IP:port targets, 187 responded, 100%
+  protocol match among responders; auth hints observed for cleartext, MD5, and
+  SASL requests.
 - SQLSTATE gap: 294 / 2053 records have no SQLSTATE; most are empty or
   non-ErrorResponse payloads, so 85.68% is near the useful ceiling for this corpus.
 

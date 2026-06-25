@@ -20,17 +20,27 @@ committed.
 
 | metric | count | percent | percent_of_responded |
 |---|---:|---:|---:|
-| responded | 189 / 205 | 92.2% |  |
-| protocol_match | 189 | 92.2% | 100.0% |
-| sqlstate_extraction | 21 | 10.24% | 11.11% |
+| responded | 187 / 205 | 91.22% |  |
+| protocol_match | 187 | 91.22% | 100.0% |
+| sqlstate_extraction | 22 | 10.73% | 11.76% |
+| server_version_extraction | 0 | 0.0% | 0.0% |
 
 ## Probe Status
 
 | status | count | percent |
 |---|---:|---:|
-| startup_response | 110 | 53.66% |
-| ssl_supported | 79 | 38.54% |
-| connect_failed | 16 | 7.8% |
+| startup_response | 102 | 49.76% |
+| ssl_supported | 85 | 41.46% |
+| connect_failed | 18 | 8.78% |
+
+## Auth Methods
+
+| method | count | percent |
+|---|---:|---:|
+| none | 165 | 80.49% |
+| cleartext_password | 30 | 14.63% |
+| md5_password | 6 | 2.93% |
+| sasl | 4 | 1.95% |
 
 ## Notes
 
@@ -38,3 +48,5 @@ committed.
   matches the online-only `pgsql.protocol.ssl-request-response` rule.
 - SQLSTATE extraction is lower online because many live targets stop at the
   SSLRequest response and do not expose an ErrorResponse unless TLS is continued.
+- `server_version` was not observed in this unauthenticated run; ParameterStatus
+  is retained as an opportunistic parser for permissive or proxy paths.
